@@ -1,4 +1,4 @@
-# Reproduce the main PoolEval experiments (RQ1-RQ5). Results -> results/*.json
+# Reproduce the PoolEval paper experiments (RQ1-RQ8). Results -> results/*.json
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 Write-Host ">> RQ1  Ranking a pool (Table: main)"
@@ -11,4 +11,10 @@ Write-Host ">> RQ4  Equivalence kernel precision/recall"
 python experiments/run_rq4_kernel.py --seeds 8
 Write-Host ">> RQ5  Scaling with pool size"
 python experiments/run_rq5_scaling.py --seeds 5
+Write-Host ">> RQ6  Reliability and efficiency"
+python experiments/run_rq6_reliability_efficiency.py --seeds 5
+Write-Host ">> RQ7  Warm-start optimization"
+python experiments/run_rq7_warmstart.py --seeds 5
+Write-Host ">> RQ8  Robustness to workload drift"
+python experiments/run_rq8_drift.py --seeds 5
 Write-Host ">> done. See results/*.json"

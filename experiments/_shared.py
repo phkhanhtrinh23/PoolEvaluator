@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import numpy as np
+from scipy.stats import pearsonr
 
 # allow `python experiments/run_xxx.py` from the repo root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +28,34 @@ def mean_ci(values):
 def aggregate(per_seed):
     """per_seed: list of metric dicts -> {metric: (mean, ci)}."""
     return {k: mean_ci([d[k] for d in per_seed]) for k in per_seed[0]}
+
+
+def coverage(acc_hat, acc_true, half_width):
+    acc_hat = np.asarray(acc_hat)
+    acc_true = np.asarray(acc_true)
+    half_width = np.asarray(half_width)
+    return float(np.mean((acc_true >= acc_hat - half_width) &
+                         (acc_true <= acc_hat + half_width)))
+
+
+def calibration_error(probs, labels, bins=10):
+    probs = np.asarray(probs, dtype=float)
+    labels = np.asarray(labels, dtype=float)
+    if probs.size == 0:
+        return 0.0
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    ece = 0.0
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        mask = (probs >= lo) & (probs <= hi if hi == 1.0 else probs < hi)
+        if not np.any(mask):
+            continue
+        ece += (mask.mean() * abs(probs[mask].mean() - labels[mask].mean()))
+    return float(ece)
+
+
+def pearson(a, b):
+    r, _ = pearsonr(np.asarray(a, dtype=float), np.asarray(b, dtype=float))
+    return float(r) if np.isfinite(r) else 0.0
 
 
 def evaluate_pool(make_cfg, seeds=5, include_baselines=True, methods=None):

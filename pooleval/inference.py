@@ -13,13 +13,13 @@ class PoolEval:
     def __init__(self, cfg):
         self.cfg = cfg
 
-    def evaluate(self, run, verbose=False):
+    def evaluate(self, run, verbose=False, init=None, max_iters=None):
         cfg = self.cfg
         # graded equivalence kernel (L0 exact / L1 canonical / L2 multi-instance)
         obs = kernelmod.apply(run.true_class, cfg, level=cfg.kernel_level,
                               rng=np.random.default_rng(cfg.seed + 7))
         prec, rec = kernelmod.measure(run.true_class, obs)
-        out = run_em(obs, run, cfg, verbose=verbose)
+        out = run_em(obs, run, cfg, verbose=verbose, init=init, max_iters=max_iters)
 
         acc = out["acc"]
         order = np.argsort(-acc)                       # best first

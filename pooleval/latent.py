@@ -21,7 +21,7 @@ def _logit(p):
     return np.log(p / (1 - p))
 
 
-def run_em(obs, run, cfg, verbose=False):
+def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4):
     M, N = obs.shape
     group = run.group
     G = run.n_groups
@@ -29,16 +29,23 @@ def run_em(obs, run, cfg, verbose=False):
     prior_sigma = run.prior_sigma
 
     # init
-    a = prior.copy() if cfg.use_prior else np.full(M, 0.6)
-    b = np.zeros(N)
-    u = np.zeros(G)
+    init = init or {}
+    a = np.asarray(init.get("a", prior.copy() if cfg.use_prior else np.full(M, 0.6)),
+                   dtype=float).copy()
+    b = np.asarray(init.get("b", np.zeros(N)), dtype=float).copy()
+    u = np.asarray(init.get("u", np.zeros(G)), dtype=float).copy()
 
     # precompute per-item candidate classes
     item_classes = [np.unique(obs[:, i]) for i in range(N)]
     gmask = [group == g for g in range(G)]
 
     agree = np.zeros((M, N))
-    for it in range(cfg.em_iters):
+    n_iters = cfg.em_iters if max_iters is None else int(max_iters)
+    n_iters = max(0, n_iters)
+    for it in range(n_iters):
+        a_prev = a.copy()
+        b_prev = b.copy()
+        u_prev = u.copy()
         # reliability weight = estimated accuracy, always positive and bounded in
         # (0,1). Bounded (not logit) avoids the high-a -> peaked-consensus -> higher-a
         # runaway; keeping it strictly positive avoids the opposite collapse where
@@ -112,10 +119,20 @@ def run_em(obs, run, cfg, verbose=False):
         if verbose and (it % 10 == 0 or it == cfg.em_iters - 1):
             print(f"  [EM] it {it:2d}  mean a={a.mean():.3f}")
 
+        delta = max(np.max(np.abs(a - a_prev)),
+                    np.max(np.abs(b - b_prev)),
+                    np.max(np.abs(u - u_prev)))
+        if delta < tol:
+            n_iters = it + 1
+            break
+    else:
+        n_iters = n_iters
+
     cbar, Meff = _effective_models(obs, agree, M, group)
     flag = _collusion_flag(obs, group, run)
     return dict(acc=a, b=b, u=u, agree=agree, latent_post=latent_post,
-                cbar=cbar, Meff=Meff, collusion=flag, a_sigma=a_sig)
+                cbar=cbar, Meff=Meff, collusion=flag, a_sigma=a_sig,
+                n_iters=n_iters)
 
 
 def _estimate_loadings(obs, agree, group, G):

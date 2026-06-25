@@ -14,7 +14,7 @@ def main(seeds=5):
     make = lambda s: Config(seed=s)            # noqa: E731  (default main-table pool)
     agg = evaluate_pool(make, seeds=seeds)
     order = ["B1 Independent", "B2 Majority/self-cons.", "B3 Dawid--Skene",
-             "B4 Agreement-on-line", "PoolEval (ours)"]
+             "B4 Agreement-on-line", "B5 LLM-as-judge", "PoolEval (ours)"]
     print_table("RQ1: label-free accuracy & ranking on a diverse M=12 pool "
                 f"(mean +/- 95% CI over {seeds} seeds; lower MAE/Flip better, "
                 "higher Kendall/Top-k better)", agg, order=order)

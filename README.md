@@ -45,6 +45,7 @@ precision fusion. The components and the baselines we compare against:
 | B2 Majority / self-consistency (Wang et al., 2023) | accuracy = agreement with execution-majority | §5 | [`baselines/majority/`](baselines/majority/) |
 | B3 Dawid–Skene (1979) | latent-truth crowd model, no prior, independent errors | §5 | [`baselines/dawid_skene/`](baselines/dawid_skene/) |
 | B4 Agreement-on-the-line (Baek et al., 2022) | tuned agreement→accuracy linear trend | §5 | [`baselines/agreement_line/`](baselines/agreement_line/) |
+| B5 LLM-as-judge | simulator proxy for judge-style scoring | §5 | [`baselines/llm_judge/`](baselines/llm_judge/) |
 
 ---
 
@@ -71,7 +72,7 @@ print("M_eff   :", round(out["Meff"], 1), "of", cfg.M) # effective independent m
 print("collusion flag:", out["collusion"])
 ```
 
-## Reproduce the main experiments
+## Reproduce the paper experiments
 
 ```bash
 bash scripts/reproduce_main.sh          # or: powershell scripts/reproduce_main.ps1
@@ -81,6 +82,9 @@ python experiments/run_rq2_ablation.py    --seeds 8    # break the gauge (ablati
 python experiments/run_rq3_correlation.py --seeds 5    # correlated errors & M_eff
 python experiments/run_rq4_kernel.py      --seeds 8    # equivalence-kernel P/R
 python experiments/run_rq5_scaling.py     --seeds 5    # scaling with pool size
+python experiments/run_rq6_reliability_efficiency.py --seeds 5 # coverage, ECE, cost, budget
+python experiments/run_rq7_warmstart.py    --seeds 5    # warm-start optimization
+python experiments/run_rq8_drift.py        --seeds 5    # workload drift
 python experiments/run_all.py             --seeds 8    # everything -> results/*.json
 ```
 
@@ -98,6 +102,7 @@ ranking-difference metrics (flip rate, Kendall-τ) it is designed to improve:
 | B2 Majority / self-cons. | 3.73 | 0.09 | 0.81 | 0.50 | 0.83 |
 | B3 Dawid–Skene | 3.69 | 0.10 | 0.79 | 0.50 | 0.83 |
 | B4 Agreement-on-the-line | 3.66 | 0.11 | 0.78 | 0.50 | 0.80 |
+| B5 LLM-as-judge | 3.75 | 0.12 | 0.77 | 0.47 | 0.79 |
 | **PoolEval (ours)** | **3.24** | **0.07** | **0.86** | 0.50 | 0.83 |
 
 **RQ2 — Breaking the gauge (ablation, `--seeds 8`).** Removing any component raises
@@ -159,15 +164,15 @@ coarse, binary Top-1 metric on near-tied pools.)*
 | §4.4 Shift-adaptive precision (inverse-variance) fusion | `latent.py` M-step (`fusion="precision"`) |
 | §4.5 Inference outputs (ranking, intervals, M_eff, flag) | [`pooleval/inference.py`](pooleval/inference.py) |
 | Prop. 4.1 (joint estimation ↓ ranking-difference variance) | RQ1/RQ5 flip-rate & Kendall reductions |
-| §5 Baselines B1–B4 | [`baselines/`](baselines/) |
-| §6 RQ1–RQ5 | [`experiments/`](experiments/) |
+| §5 Baselines B1–B5 | [`baselines/`](baselines/) |
+| §6 RQ1–RQ8 | [`experiments/`](experiments/) |
 
 ## Repository layout
 
 ```
 pooleval/        core: config, simulator, kernel, latent EM, fusion, inference, metrics
-baselines/       B1 Independent, B2 Majority, B3 Dawid–Skene, B4 Agreement-on-the-line
-experiments/     run_rq1..run_rq5, run_all (write results/*.json)
+baselines/       B1 Independent, B2 Majority, B3 Dawid–Skene, B4 Agreement-on-the-line, B5 judge proxy
+experiments/     run_rq1..run_rq8, run_all (write results/*.json)
 configs/         default.yaml (mirrors pooleval/config.py)
 scripts/         reproduce_main.sh / .ps1
 tests/           smoke tests (pipeline runs; PoolEval has lowest flip rate)
