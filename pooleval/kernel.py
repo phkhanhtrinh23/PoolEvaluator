@@ -1,11 +1,11 @@
 """Graded execution-equivalence kernel.
 
-Real PoolEval compares query RESULT SETS on the live database along a
-canonicalization ladder: L0 exact multiset match, L1 canonicalized (sort/normalize
-types/round floats/ignore column names -- the standard benchmark comparator), L2
+Real PoolEval-SQL compares query RESULT SETS on the live database along a
+canonicalization ladder: LA0 exact multiset match, LA1 canonicalized (sort/normalize
+types/round floats/ignore column names -- the standard benchmark comparator), LA2
 multi-instance (re-run on t constraint-preserving sub-instances). We simulate the
-*measured equivalence error* of each level: L0 has high precision but poor recall
-(false disagreements from ordering/types), L1 recovers recall, L2 raises precision
+*measured equivalence error* of each level: LA0 has high precision but poor recall
+(false disagreements from ordering/types), LA1 recovers recall, LA2 raises precision
 by removing coincidental same-result matches.
 
 `apply` perturbs the gold result-classes into OBSERVED classes with the level's
@@ -14,12 +14,12 @@ precision/recall, so downstream estimators see realistic equivalence noise.
 import numpy as np
 
 
-_LEVELS = {"L0": ("recall_L0", "precision_L0"),
-           "L1": ("recall_L1", "precision_L1"),
-           "L2": ("recall_L2", "precision_L2")}
+_LEVELS = {"LA0": ("recall_LA0", "precision_LA0"),
+           "LA1": ("recall_LA1", "precision_LA1"),
+           "LA2": ("recall_LA2", "precision_LA2")}
 
 
-def apply(true_class, cfg, level="L2", rng=None):
+def apply(true_class, cfg, level="LA2", rng=None):
     rng = rng or np.random.default_rng(cfg.seed + 99)
     rk, pk = _LEVELS[level]
     recall, precision = getattr(cfg, rk), getattr(cfg, pk)

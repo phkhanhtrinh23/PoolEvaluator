@@ -1,5 +1,8 @@
-"""PoolEval: label-free joint evaluation of a Text-to-SQL model pool via
-anchored, correlation-aware latent-correctness inference."""
+"""PoolEval-SQL: label-free joint evaluation and ranking of a Text-to-SQL model
+pool via anchored, correlation-aware latent-correctness inference.
+
+The paper names the framework PoolEval-SQL; this package is imported as `pooleval`
+and its estimator is the `PoolEval` class."""
 from .config import Config
 from .inference import PoolEval
 from .data import simulate, PoolRun

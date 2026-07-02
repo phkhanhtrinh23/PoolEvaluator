@@ -1,7 +1,7 @@
 """RQ7 -- Warm-start optimization.
 
 Fits a lightweight meta-initializer on source pools, then compares cold-start
-vs warm-start PoolEval as the number of unlabeled items grows.
+vs warm-start PoolEval-SQL as the number of unlabeled items grows.
 
   python experiments/run_rq7_warmstart.py [--seeds 5]
 """

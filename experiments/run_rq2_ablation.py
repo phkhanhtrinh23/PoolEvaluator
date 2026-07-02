@@ -1,9 +1,10 @@
 """RQ2/RQ4 -- Breaking the gauge: anchor, verifier, correlation, kernel
 (paper Table 'tab:ablation').
 
-Removes PoolEval's requirement components one at a time on the same pools and
-reports the change in accuracy MAE / flip / Top-1. Dropping the seen prior should
-blow up absolute MAE (gauge ambiguity); exact-match kernel should cost MAE+flips.
+Removes PoolEval-SQL's requirement components (R2 anchors, R3 correlation, R4
+graded kernel) one at a time on the same pools and reports the change in accuracy
+MAE / flip / Top-1. Dropping the seen prior should blow up absolute MAE (gauge
+ambiguity); the exact-match (LA0) kernel should cost MAE+flips.
 
   python experiments/run_rq2_ablation.py [--seeds 8]
 """
@@ -14,13 +15,13 @@ from _shared import Config, PoolEval, simulate, metrics, aggregate, save_json, R
 
 
 VARIANTS = {
-    "PoolEval (full)":           dict(),
-    "  - seen prior (req2)":     dict(use_prior=False),
-    "  - exec verifier (req2)":  dict(use_verifier=False),
-    "  - correlation (req3)":    dict(use_correlation=False),
-    "  - graded kernel (req4)":  dict(kernel_level="L0"),
+    "PoolEval-SQL (full)":       dict(),
+    "  - seen prior (R2)":       dict(use_prior=False),
+    "  - exec verifier (R2)":    dict(use_verifier=False),
+    "  - correlation (R3)":      dict(use_correlation=False),
+    "  - graded kernel (R4)":    dict(kernel_level="LA0"),
     "  - all (~ B3)":            dict(use_prior=False, use_verifier=False,
-                                      use_correlation=False, kernel_level="L0",
+                                      use_correlation=False, kernel_level="LA0",
                                       fusion="agreement_only"),
 }
 

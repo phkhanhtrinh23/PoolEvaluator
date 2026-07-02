@@ -11,7 +11,7 @@ class AgreementLine:
     name = "B4 Agreement-on-line"
 
     def evaluate(self, run, cfg):
-        obs = obs_at(run, cfg, level="L1")
+        obs = obs_at(run, cfg, level="LA1")
         M, N = obs.shape
         r = np.zeros(M)
         for m in range(M):

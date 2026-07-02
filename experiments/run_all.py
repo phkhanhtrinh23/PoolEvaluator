@@ -1,4 +1,4 @@
-"""Run all PoolEval experiments end to end and write results/ JSON.
+"""Run all PoolEval-SQL experiments end to end and write results/ JSON.
 
   python experiments/run_all.py [--seeds 8]
 """

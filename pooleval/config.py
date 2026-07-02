@@ -1,7 +1,7 @@
-"""Configuration for PoolEval (label-free joint pool evaluation for Text-to-SQL).
+"""Configuration for PoolEval-SQL (label-free joint pool evaluation for Text-to-SQL).
 
 Defaults mirror the paper: a diverse M=12 pool over seven provenance groups,
-graded kernel L0-L2, IRT-style provenance-grouped errors, seen-prior + verifier
+graded kernel LA0-LA2, IRT-style provenance-grouped errors, seen-prior + verifier
 anchors, inverse-variance fusion, EM to convergence, 90% conformal intervals.
 """
 from dataclasses import dataclass, asdict
@@ -34,13 +34,18 @@ class Config:
     verifier_acc: float = 0.72     # P(verifier points at the true class) -- independent channel
     verifier_strength: float = 2.0 # log-bonus the verifier adds to its guessed class
 
+    # ---- LLM-as-judge baseline (B5): a PREFERENCE judge (no execution) ----
+    judge_hit: float = 0.90        # P(judge labels a truly-correct answer correct)
+    judge_fa: float = 0.18         # P(judge is fooled by a plausible-but-wrong query)
+    judge_style_bias: float = 0.06 # per-model judge style/verbosity bias std (mis-ranking)
+
     # ---- graded equivalence kernel (simulated precision/recall vs gold) ----
-    recall_L0: float = 0.74   # exact match: misses canonical-equal results
-    recall_L1: float = 0.95   # canonicalized
-    recall_L2: float = 0.97   # multi-instance
-    precision_L0: float = 0.98
-    precision_L1: float = 0.95
-    precision_L2: float = 0.99
+    recall_LA0: float = 0.74   # LA0 exact match: misses canonical-equal results
+    recall_LA1: float = 0.95   # LA1 canonicalized
+    recall_LA2: float = 0.97   # LA2 multi-instance
+    precision_LA0: float = 0.98
+    precision_LA1: float = 0.95
+    precision_LA2: float = 0.99
 
     # ---- inference ----
     em_iters: int = 40
@@ -48,7 +53,7 @@ class Config:
     use_prior: bool = True
     use_verifier: bool = True
     use_correlation: bool = True
-    kernel_level: str = "L2"    # L0 | L1 | L2  (L0 = exact-match ablation)
+    kernel_level: str = "LA2"   # LA0 | LA1 | LA2  (LA0 = exact-match ablation)
 
     def to_dict(self):
         return asdict(self)

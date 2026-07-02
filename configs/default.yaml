@@ -18,10 +18,15 @@ anchors:
   verifier_acc: 0.72   # P(verifier points at the true class)
   verifier_strength: 2.0
 
+judge:                 # LLM-as-judge baseline (B5, preference-based proxy)
+  judge_hit: 0.90      # P(judge labels a truly-correct answer correct)
+  judge_fa: 0.18       # P(judge fooled by a plausible-but-wrong query)
+  judge_style_bias: 0.06  # per-model judge style/verbosity bias std
+
 kernel:                # graded execution-equivalence kernel precision/recall
-  level: L2            # L0 exact | L1 canonical | L2 multi-instance
-  recall: {L0: 0.74, L1: 0.95, L2: 0.97}
-  precision: {L0: 0.98, L1: 0.95, L2: 0.99}
+  level: LA2           # LA0 exact | LA1 canonical | LA2 multi-instance
+  recall: {LA0: 0.74, LA1: 0.95, LA2: 0.97}
+  precision: {LA0: 0.98, LA1: 0.95, LA2: 0.99}
 
 inference:
   em_iters: 40

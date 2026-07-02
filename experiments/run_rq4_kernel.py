@@ -1,8 +1,8 @@
 """RQ4 -- The equivalence kernel (paper Table 'tab:kernel').
 
 Reports precision/recall of the graded execution-equivalence kernel against gold
-equivalence per canonicalization level: L0 exact (high precision, poor recall),
-L1 canonicalized (recovers recall), L2 multi-instance (raises precision).
+equivalence per canonicalization level: LA0 exact (high precision, poor recall),
+LA1 canonicalized (recovers recall), LA2 multi-instance (raises precision).
 
   python experiments/run_rq4_kernel.py [--seeds 8]
 """
@@ -18,7 +18,7 @@ def main(seeds=8):
     print("-" * 44)
     print(f"{'Level':>8s}{'Precision':>14s}{'Recall':>14s}")
     table = []
-    for level in ["L0", "L1", "L2"]:
+    for level in ["LA0", "LA1", "LA2"]:
         ps, rs = [], []
         for s in range(seeds):
             cfg = Config(seed=s)

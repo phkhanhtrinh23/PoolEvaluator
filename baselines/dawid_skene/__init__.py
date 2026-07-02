@@ -1,7 +1,7 @@
 """B3 -- Dawid--Skene (1979): the classic latent-truth crowd model with NO prior
 and errors assumed independent. Good on relative order but, lacking an anchor, its
 absolute level is unidentifiable (gauge ambiguity) and a correlated pool inflates it.
-Implemented as PoolEval's EM with the anchor/verifier/correlation components off.
+Implemented as PoolEval-SQL's EM with the anchor/verifier/correlation components off.
 """
 import copy
 from .._common import obs_at
@@ -17,6 +17,6 @@ class DawidSkene:
         c.use_verifier = False
         c.use_correlation = False
         c.fusion = "agreement_only"
-        obs = obs_at(run, c, level="L1")
+        obs = obs_at(run, c, level="LA1")
         out = run_em(obs, run, c)
         return out["acc"]

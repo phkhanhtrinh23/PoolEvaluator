@@ -1,4 +1,4 @@
-"""Correlation-aware latent-correctness EM (the core of PoolEval).
+"""Correlation-aware latent-correctness EM (the core of PoolEval-SQL).
 
 Maximizes the anchored posterior of Eq. (objective): an agreement likelihood that
 scores every model against a SHARED latent answer (IRT ability/difficulty), a
@@ -9,7 +9,7 @@ latent posteriors, the effective-independent-model count M_eff, and a collusion
 flag.
 
 Flags on Config toggle the requirement components for ablations:
-  use_prior (req2), use_verifier (req2), use_correlation (req3),
+  use_prior (R2), use_verifier (R2), use_correlation (R3),
   fusion in {precision, prior_only, agreement_only}.
 """
 import numpy as np

@@ -2,8 +2,8 @@
 
 The paper evaluates real model zoos on Spider/BIRD/Spider 2.0; those checkpoints
 and databases are not redistributable, so this module simulates the *evaluation
-problem* PoolEval is designed for, faithfully reproducing the phenomena the method
-exploits or guards against:
+problem* PoolEval-SQL is designed for, faithfully reproducing the phenomena the
+method exploits or guards against:
 
   * Latent correctness: each item i has a latent correct result class (0) and a
     difficulty b_i; model m answers correctly w.p. sigma(s*(a_m - b_i)) (IRT).

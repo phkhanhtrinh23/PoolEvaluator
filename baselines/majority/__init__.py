@@ -11,6 +11,6 @@ class Majority:
     name = "B2 Majority/self-cons."
 
     def evaluate(self, run, cfg):
-        obs = obs_at(run, cfg, level="L1")
+        obs = obs_at(run, cfg, level="LA1")
         acc, _ = majority_accuracy(obs)
         return acc

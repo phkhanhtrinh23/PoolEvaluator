@@ -1,4 +1,4 @@
-"""PoolEval estimator: kernel -> correlation-aware latent EM -> outputs.
+"""PoolEval-SQL estimator: kernel -> correlation-aware latent EM -> outputs.
 
 Returns per-model accuracy, the ranking with pairwise win-probabilities,
 conformal-style 90% intervals widened by the measured kernel-equivalence error,
@@ -15,7 +15,7 @@ class PoolEval:
 
     def evaluate(self, run, verbose=False, init=None, max_iters=None):
         cfg = self.cfg
-        # graded equivalence kernel (L0 exact / L1 canonical / L2 multi-instance)
+        # graded equivalence kernel (LA0 exact / LA1 canonical / LA2 multi-instance)
         obs = kernelmod.apply(run.true_class, cfg, level=cfg.kernel_level,
                               rng=np.random.default_rng(cfg.seed + 7))
         prec, rec = kernelmod.measure(run.true_class, obs)

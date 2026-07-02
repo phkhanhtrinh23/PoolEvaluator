@@ -1,4 +1,4 @@
-"""Shared helpers for PoolEval experiment scripts."""
+"""Shared helpers for PoolEval-SQL experiment scripts."""
 import os
 import sys
 import json
@@ -70,7 +70,7 @@ def evaluate_pool(make_cfg, seeds=5, include_baselines=True, methods=None):
                 m = metrics.all_metrics(b.evaluate(run, cfg), run.true_acc)
                 rows.setdefault(b.name, []).append(m)
         out = PoolEval(cfg).evaluate(run)
-        rows.setdefault("PoolEval (ours)", []).append(
+        rows.setdefault("PoolEval-SQL (ours)", []).append(
             metrics.all_metrics(out["acc"], run.true_acc))
         for name, fn in extra.items():
             rows.setdefault(name, []).append(fn(run, cfg, out))
