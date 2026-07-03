@@ -50,6 +50,106 @@ precision fusion. The components and the baselines we compare against:
 
 ---
 
+## How the method works (the EM in [`pooleval/latent.py`](pooleval/latent.py))
+
+**The one-sentence picture.** On a new database we never see the gold SQL, so *the
+correct answer to each question is a hidden variable*. PoolEval-SQL treats the pool as
+a crowd of graders and runs **expectation–maximization (EM)** to jointly (a) infer each
+question's hidden correct answer and (b) score each model against those inferred
+answers — bootstrapping one from the other until they stop changing. It is an
+**inference procedure run fresh on a single unlabeled target**: there is no gradient
+descent and no weights learned across datasets.
+
+### What is estimated vs. what is held fixed
+
+EM solves for four things and treats everything else as fixed data or a fixed anchor.
+
+| Quantity (code name) | Meaning | Status in EM |
+| --- | --- | --- |
+| `latent_hat[i]` (`z_i`) | the hidden correct answer (result class) of question *i* | **latent variable** — re-inferred every E-step |
+| `a` (`a_m`) | per-model accuracy / IRT "ability" — **the deliverable** | **estimated** — updated every M-step |
+| `b` (`b_i`) | per-question difficulty | **estimated** — updated every M-step |
+| `u` (`u_g`) | per-provenance-group shared-error loading | **estimated** — updated every M-step |
+| `obs[m,i]` | observed result-equivalence classes from the kernel | **fixed data** |
+| `run.prior` (`π_m`), `run.prior_sigma` (`σ_m`) | each model's seen single-model calibration | **fixed anchor** |
+| `run.verifier_guess` (`v_i`) | the execution verifier's guess of the true answer | **fixed anchor** |
+| `run.group` (`G(m)`) | provenance tag (which base model it derives from) | **fixed input** |
+
+Nothing on the "fixed" rows is trained here. In particular the seen priors `π_m` were
+fit **earlier**, by an external single-model calibrator on a *labeled source* domain;
+they enter EM only as the anchor that pins the accuracy level.
+
+### What "maximization" maximizes
+
+EM maximizes the log-posterior of the whole problem (paper Eq. *objective*, §III) over
+the parameters `a, b, u` and the latent answers `z`:
+
+```
+maximize  Σ_{m,i} log p(result_{m,i} | z_i, a_m, b_i)   agreement likelihood: every model scored
+                                                         against the SAME latent answer, with a
+                                                         provenance-group correlated-error discount
+        + Σ_i     log p(v_i | z_i)                       verifier: the database is an independent grader
+        + Σ_m     log π_m(a_m)                            seen prior: anchors each model's absolute level
+```
+
+The first term is the whole point of evaluating the pool *jointly*: a single-model
+evaluator never sees that two models agreed, but here every pairwise agreement is
+evidence about the shared `z_i`, hence about both models' accuracies. The verifier and
+prior terms pin the level (see *why the anchors matter* below).
+
+### The two alternating steps
+
+Each iteration of the `for it in range(n_iters)` loop does:
+
+- **E-step — "given the current scores, what was each question's true answer?"**
+  Holding `a, b, u` fixed, for every item it builds a **reliability-weighted,
+  group-discounted, verifier-nudged vote** over the candidate answers and softmaxes it
+  into a posterior `p(z_i = class)`; `latent_hat[i]` is the arg-max.
+  - `w = clip(a)` — each model votes with weight equal to its current estimated accuracy
+    (a model believed to be 0.8-accurate counts far more than a 0.3-accurate one).
+  - `disc = 1/(1 + u_g·(n−1))` — if `n` models from the *same provenance group* vote the
+    same class, their weights are shrunk so a colluding clique of near-clones counts as
+    ≈ **one** independent vote, not `n`.
+  - the verifier adds `verifier_strength` to whichever class it points at.
+
+- **M-step — "given those answers, how accurate is each model?"**
+  Holding the latent answers fixed, each model's raw accuracy is
+  `a_agree[m] = mean_i (obs[m,i] == latent_hat[i])` — the fraction of questions where it
+  matched the inferred truth — then pulled toward the seen prior by **inverse-variance
+  (precision) fusion**: an uncertain prior yields to the consensus, a near-clone pool
+  yields to the prior. Difficulties `b_i` are read from how many models got item *i*
+  right; loadings `u_g` from how much a group agrees *on wrong answers* beyond the
+  cross-group baseline (`_estimate_loadings`).
+
+The two steps reinforce each other — better accuracies sharpen the weighted vote, which
+sharpens the latent answers, which sharpen the accuracies — and the loop runs until
+`a, b, u` stop changing (`delta < tol`), typically a handful of iterations. The
+accuracy update deliberately matches against the **hard** (arg-max) latent estimate:
+soft averaging would shrink every model toward 0.5 and lose the absolute level.
+
+### Why the anchors and the group discount are load-bearing
+
+Agreement *alone* is **gauge-ambiguous**: a pool that is all-correct and a pool that
+all-agrees-on-the-same-wrong-answer produce identical agreement, so the absolute
+accuracy level is unidentifiable. The **seen prior** and the **execution verifier** (an
+independent channel — a query that fails to run or returns an implausible result is
+wrong no matter who produced it) break that tie. Separately, models sharing a base
+model fail *together*, so a naive majority over-credits a colluding clique; the
+**group loadings `u_g`** down-weight within-group agreement and feed the reported
+**effective independent-model count** `M_eff = M / (1 + c̄·(M−1))`. The ablations (RQ2)
+switch each of these off (`use_prior`, `use_verifier`, `use_correlation`) to show the
+specific failure it prevents.
+
+### Nothing is trained across datasets
+
+`run_em` is called once per target `PoolRun` and estimates `a, b, u` from that target's
+unlabeled outputs alone. The **only** cross-dataset learning is the optional warm-start
+(RQ7, [`run_rq7_warmstart.py`](experiments/run_rq7_warmstart.py)), which meta-learns a
+better *initial* `a` so EM converges in fewer iterations — the answer at convergence is
+unchanged.
+
+---
+
 ## Install
 
 ```bash
