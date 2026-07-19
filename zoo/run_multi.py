@@ -53,7 +53,8 @@ def build_or_load(ds, zcfg, seed, force=False):
     return run, names, dev, preds_dev
 
 
-def run_dataset(ds, budget, strategy, seed, mock, model, rounds, zcfg):
+def run_dataset(ds, budget, strategy, seed, mock, model, rounds, zcfg,
+                synthesize=False):
     run, names, dev, preds_dev = build_or_load(ds, zcfg, seed)
     cfg = Config(real_data=True)
     base = PoolEval(cfg).evaluate(run)
@@ -65,15 +66,19 @@ def run_dataset(ds, budget, strategy, seed, mock, model, rounds, zcfg):
     print(f"[{ds}] pure PoolEval-SQL: MAE={base_m['MAE']:.2f} Kendall={base_m['Kendall']:.2f} "
           f"Top1={base_m['Top1']:.0f}  Meff={base['Meff']:.1f}  flagged={base_ab['n_flagged']}")
 
-    judge = SimulatedJudge() if mock else RealJudge(dev, names, preds_dev,
-                                                    run.true_class, model=model)
+    judge = SimulatedJudge() if mock else RealJudge(
+        dev, names, preds_dev, run.true_class, model=model, synthesize=synthesize)
     out = ActivePoolEval(cfg, ActiveConfig(budget=budget, rounds=rounds,
                          strategy=strategy), judge=judge).run(run)
     act_m = metrics.all_metrics(out["acc"], run.true_acc)
-    nnone = sum(1 for e in getattr(judge, "log", []) if e.get("choice") is None)
-    print(f"[{ds}] active ({'mock' if mock else model}, {out['judge_calls']} calls, "
-          f"{nnone} 'none'): MAE={act_m['MAE']:.2f} Kendall={act_m['Kendall']:.2f} "
-          f"Top1={act_m['Top1']:.0f}")
+    log = getattr(judge, "log", [])
+    # mock SimulatedJudge has no 'verdict'; RealJudge logs verdict in {choice,sql,none}
+    nnone = sum(1 for e in log if e.get("verdict") == "none")
+    nsql = sum(1 for e in log if e.get("verdict") == "sql")
+    mode = "synth" if synthesize else ("mock" if mock else model)
+    print(f"[{ds}] active ({mode}, {out['judge_calls']} calls, {nnone} 'none'"
+          f"{f', {nsql} synth-SQL' if synthesize else ''}): MAE={act_m['MAE']:.2f} "
+          f"Kendall={act_m['Kendall']:.2f} Top1={act_m['Top1']:.0f}")
 
     res = dict(dataset=ds, M=int(run.M), N=int(run.N),
                true_acc_mean=float(run.true_acc.mean()),
@@ -81,23 +86,24 @@ def run_dataset(ds, budget, strategy, seed, mock, model, rounds, zcfg):
                Meff=float(base["Meff"]), abst_flagged=int(base_ab["n_flagged"]),
                budget=int(budget), strategy=strategy, mock=bool(mock),
                model=(None if mock else model), judge_calls=int(out["judge_calls"]),
-               judge_none=int(nnone), pure=base_m, active=act_m,
-               judge_log=getattr(judge, "log", []))
+               judge_none=int(nnone), judge_synth=int(nsql), synthesize=bool(synthesize),
+               pure=base_m, active=act_m, judge_log=log)
     os.makedirs(RESULTS, exist_ok=True)
-    with open(os.path.join(RESULTS, f"zoo_multi_{ds}.json"), "w") as f:
+    suffix = "_synth" if synthesize else ""
+    with open(os.path.join(RESULTS, f"zoo_multi_{ds}{suffix}.json"), "w") as f:
         json.dump(res, f, indent=2, default=float)
     return res
 
 
 def main(datasets, budget=12, strategy="hybrid_submodular", seed=0, mock=False,
-         model="gpt-5-mini", rounds=4, n_target=150, n_source=120):
+         model="gpt-5-mini", rounds=4, n_target=150, n_source=120, synthesize=False):
     zcfg = ZooConfig(n_target=n_target, n_source=n_source, seed=seed)
     summary = []
     for ds in datasets:
         print("\n" + "=" * 70 + f"\n  DATASET: {ds}\n" + "=" * 70)
         try:
             summary.append(run_dataset(ds, budget, strategy, seed, mock, model,
-                                       rounds, zcfg))
+                                       rounds, zcfg, synthesize=synthesize))
         except Exception as e:  # noqa
             import traceback
             traceback.print_exc()
@@ -128,6 +134,9 @@ if __name__ == "__main__":
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--model", default="gpt-5-mini")
     ap.add_argument("--mock", action="store_true")
+    ap.add_argument("--synthesize", action="store_true",
+                    help="judge may WRITE a correct SQL when no candidate is right")
     a = ap.parse_args()
     main(a.datasets, budget=a.budget, strategy=a.strategy, seed=a.seed, mock=a.mock,
-         model=a.model, rounds=a.rounds, n_target=a.n_target, n_source=a.n_source)
+         model=a.model, rounds=a.rounds, n_target=a.n_target, n_source=a.n_source,
+         synthesize=a.synthesize)

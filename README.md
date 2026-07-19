@@ -227,6 +227,14 @@ BIRD-MiniDev), and the largest ranking win lands on the **hardest** benchmark �
 fixes the Top-1 deployment choice. Table, definitions, analysis, and reproduction
 commands: **[`experiments/MULTI_DATASET_RESULTS.md`](experiments/MULTI_DATASET_RESULTS.md)**.
 
+Deeper studies — **prior ablation** (the seen prior is load-bearing on real data;
+removing it roughly doubles MAE on hard sets), **judge reliability** (gpt-5-mini is a
+reliable *"none"*-detector but a weak *picker* — which explains the small BIRD dip),
+**bootstrap CIs** (the MAE gain is significant on 4/5 datasets), an **oracle budget
+sweep** (more budget monotonically lowers MAE), and a **synthesis-judge ablation** (an
+honest negative — letting the judge *write* SQL doesn't help on hard data): see
+**[`experiments/ANALYSIS.md`](experiments/ANALYSIS.md)**.
+
 ---
 
 ## Results (this repository's simulator)

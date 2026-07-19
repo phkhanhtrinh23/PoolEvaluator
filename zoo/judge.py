@@ -19,7 +19,7 @@ import re
 import numpy as np
 
 from .clients import chat
-from .execute import run_query
+from .execute import run_query, result_key
 
 
 _TBL = re.compile(r"\b(?:FROM|JOIN)\s+[`\"\[]?([A-Za-z_][\w]*)", re.I)
@@ -66,7 +66,7 @@ def _preview(db_path, sql, timeout, max_rows=5):
 class RealJudge:
     def __init__(self, items, member_names, preds_dev, true_class,
                  model="gpt-5-mini", timeout=5.0, max_tokens=2048, verbose=False,
-                 max_schema_chars=2500, max_candidates=6):
+                 max_schema_chars=2500, max_candidates=6, synthesize=False):
         # items[i] must align with PoolRun column i (same order build_poolrun used)
         self.items = items
         self.names = member_names
@@ -78,6 +78,7 @@ class RealJudge:
         self.verbose = verbose
         self.max_schema_chars = max_schema_chars
         self.max_candidates = max_candidates
+        self.synthesize = synthesize
         self.calls = 0
         self._fresh = 20_000_000
         self.log = []
@@ -116,56 +117,81 @@ class RealJudge:
             prev = _preview(item["db_path"], sql, self.timeout, max_rows=3)[:300]
             cand_txt.append(f"Candidate {j}:\nSQL: {sql[:400]}\nResult: {prev}")
         schema = _compact_schema(item.get("schema", {}), sqls, self.max_schema_chars)
+        if self.synthesize:
+            tail = ("\n\nReply with ONLY a JSON object. If one candidate's RESULT is "
+                    "correct: {\"choice\": <candidate number>}. If NONE is correct, "
+                    "WRITE a correct query yourself: {\"sql\": \"SELECT ...\"}.")
+        else:
+            tail = ("\n\nReply with ONLY a JSON object: {\"choice\": <candidate number>} "
+                    "or {\"choice\": \"none\"}.")
         prompt = (
             "You are a strict Text-to-SQL grader. Given a database schema, a question, "
             "and several candidate SQL queries WITH their executed results, decide "
-            "which candidate's RESULT correctly answers the question. If none of them "
-            "is correct, answer \"none\" -- do not force a choice.\n\n"
+            "which candidate's RESULT correctly answers the question.\n\n"
             f"Schema:\n{schema}\n\nQuestion: {item['question']}\n\n"
-            + "\n\n".join(cand_txt)
-            + "\n\nReply with ONLY a JSON object: {\"choice\": <candidate number>} "
-              "or {\"choice\": \"none\"}."
+            + "\n\n".join(cand_txt) + tail
         )
         try:
             content = chat("openai", self.model, [{"role": "user", "content": prompt}],
                            max_tokens=self.max_tokens)
-            choice = self._parse(content, len(classes))
         except Exception as e:  # noqa  -- a failed judge call must not abort the run
             if self.verbose:
                 print(f"  [judge] item {i}: API error {repr(e)[:70]} -> majority (no-op)")
             self.log.append(dict(item=int(i), error=repr(e)[:80],
                                 class_id=self._majority_class(obs, i)))
             return self._majority_class(obs, i)   # safe no-op pin
-        if choice is None:
+
+        kind, val = self._parse(content, len(classes), self.synthesize)
+        if kind == "choice":
+            picked, note = classes[val], f"choice={val}"
+        elif kind == "sql":                       # synthesis: map written SQL to a class
+            picked, note = self._map_sql(item, val, classes, reps), "sql"
+        else:                                     # "none" / unparseable
             self._fresh += 1
-            picked = self._fresh          # correct result not in the pool
-        else:
-            picked = classes[choice]
+            picked, note = self._fresh, "none"
         if self.verbose:
-            print(f"  [judge] item {i}: {len(classes)} classes -> choice={choice} "
-                  f"-> class {picked}")
-        self.log.append(dict(item=int(i), n_classes=len(classes),
-                             choice=(None if choice is None else int(choice)),
-                             class_id=int(picked)))
+            print(f"  [judge] item {i}: {len(classes)} classes -> {note} -> class {picked}")
+        self.log.append(dict(item=int(i), n_classes=len(classes), verdict=note,
+                            class_id=int(picked)))
         return picked
 
+    def _map_sql(self, item, sql, classes, reps):
+        """Execute the judge's written SQL and map its result to the class space: the
+        class of a candidate with the same result, else a fresh class (a correct answer
+        no model produced -- the candidate-coverage fix, label-free)."""
+        jk, _ = result_key(item["db_path"], sql, self.timeout)
+        if jk is None:
+            self._fresh += 1
+            return self._fresh
+        for c in classes:
+            ck, _ = result_key(item["db_path"], reps[c][1], self.timeout)
+            if ck is not None and ck == jk:
+                return c
+        self._fresh += 1
+        return self._fresh
+
     @staticmethod
-    def _parse(content, n):
+    def _parse(content, n, synthesize=False):
+        """Return (kind, value): ("choice", int) | ("sql", str) | ("none", None)."""
         if not content:
-            return None
-        m = re.search(r"\{[^{}]*\"choice\"[^{}]*\}", content, re.S)
-        blob = m.group(0) if m else content
-        try:
-            v = json.loads(blob).get("choice")
-        except Exception:  # noqa
+            return ("none", None)
+        obj = {}
+        m = re.search(r"\{.*\}", content, re.S)
+        if m:
+            try:
+                obj = json.loads(m.group(0))
+            except Exception:  # noqa
+                obj = {}
+        if synthesize and isinstance(obj.get("sql"), str) and obj["sql"].strip():
+            return ("sql", obj["sql"].strip())
+        v = obj.get("choice")
+        if v is None:                                   # fall back to a regex probe
             mm = re.search(r"\"choice\"\s*:\s*\"?(\d+|none)\"?", content, re.I)
             v = mm.group(1) if mm else None
-        if v is None:
-            return None
-        if isinstance(v, str) and v.strip().lower() == "none":
-            return None
+        if v is None or (isinstance(v, str) and v.strip().lower() == "none"):
+            return ("none", None)
         try:
             k = int(v)
         except (TypeError, ValueError):
-            return None
-        return k if 0 <= k < n else None
+            return ("none", None)
+        return ("choice", k) if 0 <= k < n else ("none", None)
