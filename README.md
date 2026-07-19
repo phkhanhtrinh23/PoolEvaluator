@@ -191,6 +191,44 @@ python experiments/run_all.py             --seeds 8    # everything -> results/*
 
 ---
 
+## Extension: Active PoolEval-SQL (label-efficient, judge-in-the-loop)
+
+Pure PoolEval-SQL is label-free but can only ever pick a latent answer from the classes
+the pool **produced**. When every model is wrong — especially when a near-clone clique
+agrees on the *same* wrong SQL and a plausible result fools the verifier — the correct
+answer is **absent from the candidate set**, and consensus confidently credits a wrong
+class (the **candidate-coverage** limitation). **Active PoolEval-SQL** keeps the
+framework unchanged and spends a strong label-free judge (**gpt-5-mini**: reads the
+question, executes the SQL, aligns result-to-question — no gold) *only* on the most
+ambiguous items, chosen by **greedy submodular maximization** (≥ (1−1/e)·OPT,
+Nemhauser–Wolsey–Fisher 1978), then pins each verdict as a hard EM constraint and
+re-solves with incremental EM.
+
+```bash
+python experiments/run_active.py --seeds 20     # candidate-gap DGP + budget sweep + abstention
+python -m zoo.run_active --budget 12            # REAL Spider zoo + gpt-5-mini judge
+python -m zoo.run_active --budget 12 --mock     # same pipeline, oracle judge, no API cost
+```
+
+On a controlled candidate-gap DGP where pure PoolEval-SQL inflates a colluding clique
+(true acc **0.357 → 0.582**) and picks it #1, the provenance-aware submodular strategy
+recovers the correct deployment decision **85 % of the time at a 10 % label budget** (vs
+30 % random, and **15 % for uncertainty sampling** — the dangerous items look *confident*,
+so entropy-driven acquisition is the *worst*). Full write-up and tables:
+**[`experiments/ACTIVE_POOLEVAL.md`](experiments/ACTIVE_POOLEVAL.md)**.
+Code: [`pooleval/active.py`](pooleval/active.py), [`zoo/judge.py`](zoo/judge.py).
+
+**Real model zoos across 5 datasets.** The gpt-5-mini judge runs on real pools for
+**Spider, SQLFlow, BIRD, BIRD-MiniDev, and Spider 2.0-lite** (10 models, 12-question
+budget). With that tiny budget, Active PoolEval **lowers ranking error (MAE) on every
+dataset**, the judge's *"none"* rate **tracks difficulty** (0 on Spider → 4 on
+BIRD-MiniDev), and the largest ranking win lands on the **hardest** benchmark —
+**Spider 2.0-lite** (pool EX just 5 %), where it improves Kendall **0.79 → 0.85** and
+fixes the Top-1 deployment choice. Table, definitions, analysis, and reproduction
+commands: **[`experiments/MULTI_DATASET_RESULTS.md`](experiments/MULTI_DATASET_RESULTS.md)**.
+
+---
+
 ## Results (this repository's simulator)
 
 **RQ1 — Ranking a diverse `M=12` pool** (`--seeds 10`; lower MAE/Flip better, higher
@@ -273,18 +311,19 @@ coarse, binary Top-1 metric on near-tied pools.)*
 ## Repository layout
 
 ```
-pooleval/        core: config, simulator, kernel, latent EM, fusion, inference, metrics
+pooleval/        core: config, simulator, kernel, latent EM, fusion, inference, metrics, active (Active PoolEval-SQL)
 baselines/       B1 Independent, B2 Majority, B3 Dawid–Skene, B4 Agreement-on-the-line, B5 LLM-as-judge (preference proxy)
-experiments/     run_rq1..run_rq8, run_all (write results/*.json)
+experiments/     run_rq1..run_rq8, run_all; run_active (candidate-coverage + judge budget); ACTIVE_POOLEVAL.md
+zoo/             real multi-dataset pipeline; datasets.py (Spider/BIRD/SQLFlow/Spider2 loaders), judge.py (gpt-5-mini RealJudge), run_multi.py, run_active.py
 configs/         default.yaml (mirrors pooleval/config.py)
 scripts/         reproduce_main.sh / .ps1
-tests/           smoke tests (pipeline runs; PoolEval-SQL has lowest flip rate)
+tests/           test_smoke (pipeline; PoolEval-SQL lowest flip), test_active (constraint EM, judge, submodular, recovery)
 ```
 
 ## Tests
 
 ```bash
-python tests/test_smoke.py        # or: pytest -q
+python tests/test_smoke.py && python tests/test_active.py     # or: pytest -q
 ```
 
 ## License

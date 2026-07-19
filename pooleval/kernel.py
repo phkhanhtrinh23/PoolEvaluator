@@ -20,6 +20,10 @@ _LEVELS = {"LA0": ("recall_LA0", "precision_LA0"),
 
 
 def apply(true_class, cfg, level="LA2", rng=None):
+    # Real-data mode: true_class already holds measured result-equivalence classes,
+    # so there is nothing to simulate -- the observation IS the true class.
+    if getattr(cfg, "real_data", False):
+        return true_class.copy()
     rng = rng or np.random.default_rng(cfg.seed + 99)
     rk, pk = _LEVELS[level]
     recall, precision = getattr(cfg, rk), getattr(cfg, pk)
