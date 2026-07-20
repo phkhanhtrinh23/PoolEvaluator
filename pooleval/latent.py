@@ -21,12 +21,24 @@ def _logit(p):
     return np.log(p / (1 - p))
 
 
-def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4):
+def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4,
+           constraints=None):
+    """EM for the anchored latent-correctness model.
+
+    `constraints` (Active PoolEval-SQL): an optional {item_index: class_value} map of
+    JUDGE-validated items. For each such item i the latent answer is pinned --
+    P(z_i = class_value) = 1 -- so the E-step skips consensus scoring there and the
+    M-step credits every model against the judged class. The pinned class MAY be a
+    value absent from `obs[:, i]` (the judge resolved the item to a correct result no
+    model produced): every model then scores wrong on that item, which is exactly the
+    candidate-coverage fix that unlabeled consensus cannot make.
+    """
     M, N = obs.shape
     group = run.group
     G = run.n_groups
     prior = run.prior
     prior_sigma = run.prior_sigma
+    constraints = dict(constraints or {})
 
     # init
     init = init or {}
@@ -60,6 +72,12 @@ def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4):
         latent_post = []
         for i in range(N):
             col = obs[:, i]
+            # judge-validated item: latent answer pinned, no consensus scoring
+            if i in constraints:
+                c = int(constraints[i])
+                latent_post.append({c: 1.0})
+                agree[:, i] = (col == c).astype(float)
+                continue
             # count same-(group,class) members for each model
             n_gk = np.ones(M)
             if cfg.use_correlation:

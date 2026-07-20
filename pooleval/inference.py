@@ -13,13 +13,17 @@ class PoolEval:
     def __init__(self, cfg):
         self.cfg = cfg
 
-    def evaluate(self, run, verbose=False, init=None, max_iters=None):
+    def evaluate(self, run, verbose=False, init=None, max_iters=None,
+                 constraints=None, obs=None):
         cfg = self.cfg
-        # graded equivalence kernel (LA0 exact / LA1 canonical / LA2 multi-instance)
-        obs = kernelmod.apply(run.true_class, cfg, level=cfg.kernel_level,
-                              rng=np.random.default_rng(cfg.seed + 7))
+        # graded equivalence kernel (LA0 exact / LA1 canonical / LA2 multi-instance).
+        # `obs` may be supplied to reuse a fixed observation across Active rounds.
+        if obs is None:
+            obs = kernelmod.apply(run.true_class, cfg, level=cfg.kernel_level,
+                                  rng=np.random.default_rng(cfg.seed + 7))
         prec, rec = kernelmod.measure(run.true_class, obs)
-        out = run_em(obs, run, cfg, verbose=verbose, init=init, max_iters=max_iters)
+        out = run_em(obs, run, cfg, verbose=verbose, init=init, max_iters=max_iters,
+                     constraints=constraints)
 
         acc = out["acc"]
         order = np.argsort(-acc)                       # best first

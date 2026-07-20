@@ -55,5 +55,12 @@ class Config:
     use_correlation: bool = True
     kernel_level: str = "LA2"   # LA0 | LA1 | LA2  (LA0 = exact-match ablation)
 
+    # ---- real-data mode ----
+    # When True, PoolRun.true_class already holds REAL result-equivalence classes
+    # (from executing model SQL on the live DB, not the synthetic simulator), so the
+    # kernel is the identity: estimator and baselines consume the observed classes
+    # directly instead of re-perturbing them. Default False keeps simulator behavior.
+    real_data: bool = False
+
     def to_dict(self):
         return asdict(self)
