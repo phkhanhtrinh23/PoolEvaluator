@@ -138,3 +138,101 @@ class SubsetRetriever:
         cos, mmd = self.distances(items)
         d = cos if metric == "cos" else mmd
         return np.argsort(d)[:k], d
+
+
+# --------------------------------------------------------------------------- #
+#  STRUCTURAL retrieval: align on DIFFICULTY, not topic                        #
+# --------------------------------------------------------------------------- #
+# TF-IDF over question+schema tokens matches the *domain* of a set. But a pool's
+# accuracy on a set is driven by how hard its queries are, not what they are about.
+# These features are difficulty proxies computable WITHOUT labels -- they use only
+# the question text and the schema, exactly what an unlabeled target provides.
+_CUES = {
+    "agg":    r"\b(average|mean|total|sum|count|number of|how many|maximum|minimum|"
+              r"highest|lowest)\b",
+    "group":  r"\b(each|per|every|for all|by category|group)\b",
+    "sup":    r"\b(top|most|least|best|worst|rank|first|largest|smallest)\b",
+    "cmp":    r"\b(more than|greater than|less than|at least|at most|between|above|"
+              r"below|exceed)\b",
+    "time":   r"\b(year|month|day|date|before|after|since|during|recent|latest)\b",
+    "neg":    r"\b(not|without|exclude|never|no )\b",
+    "join":   r"\b(and their|along with|together with|associated|related|belonging)\b",
+}
+_CUE_RE = {k: re.compile(v, re.I) for k, v in _CUES.items()}
+_STATS_CACHE = os.path.join(CACHE_ROOT, "db_schema_stats.json")
+
+
+def _db_stats(db_id):
+    import sqlite3
+    p = os.path.join(SYNSQL_DB_ROOT, db_id, db_id + ".sqlite")
+    try:
+        con = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        cur = con.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name NOT LIKE 'sqlite_%'")
+        ts = [r[0] for r in cur.fetchall()]
+        nc = 0
+        for t in ts:
+            try:
+                cur.execute(f'PRAGMA table_info("{t}")')
+                nc += len(cur.fetchall())
+            except sqlite3.Error:
+                pass
+        con.close()
+        return [len(ts), nc]
+    except sqlite3.Error:
+        return [0, 0]
+
+
+def db_stats_map(db_ids, log=print):
+    cache = {}
+    if os.path.exists(_STATS_CACHE):
+        with open(_STATS_CACHE) as f:
+            cache = json.load(f)
+    missing = [d for d in set(db_ids) if d not in cache]
+    if missing:
+        log(f"[struct] measuring {len(missing)} SynSQL schemas")
+        for d in missing:
+            cache[d] = _db_stats(d)
+        os.makedirs(CACHE_ROOT, exist_ok=True)
+        with open(_STATS_CACHE, "w") as f:
+            json.dump(cache, f)
+    return cache
+
+
+def _feats(question, n_tables, n_cols):
+    q = question.lower()
+    f = [len(q.split()), n_tables, n_cols]
+    f += [1.0 if _CUE_RE[k].search(q) else 0.0 for k in _CUES]
+    return f
+
+
+FEAT_NAMES = ["q_len", "n_tables", "n_cols"] + list(_CUES)
+
+
+class StructuralRetriever:
+    """Same interface as SubsetRetriever, but the representation is a normalized
+    DIFFICULTY PROFILE instead of a topic bag-of-words."""
+
+    def __init__(self, recs, subsets, log=print, stats=None):
+        self.recs, self.subsets = recs, subsets
+        stats = stats or db_stats_map([r["db_id"] for r in recs], log=log)
+        F = np.array([_feats(r["question"], *stats.get(r["db_id"], [0, 0]))
+                      for r in recs], dtype=float)
+        self.mean_, self.std_ = F.mean(axis=0), F.std(axis=0) + 1e-9
+        Z = (F - self.mean_) / self.std_
+        self.mu = np.vstack([Z[idx].mean(axis=0) for idx in subsets])
+        log(f"[struct] {Z.shape[1]} difficulty features over {len(recs):,} items")
+
+    def _target_mu(self, items):
+        F = np.array([_feats(i["question"],
+                             len(i["schema"].get("schema_items", [])),
+                             sum(len(t["column_names"])
+                                 for t in i["schema"].get("schema_items", [])))
+                      for i in items], dtype=float)
+        return ((F - self.mean_) / self.std_).mean(axis=0)
+
+    def distances(self, items):
+        mu_t = self._target_mu(items)
+        d = np.linalg.norm(self.mu - mu_t[None, :], axis=1)
+        return d, d

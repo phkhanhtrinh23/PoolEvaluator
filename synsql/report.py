@@ -9,9 +9,9 @@ import numpy as np
 
 from .config import RESULTS
 
-ORDER = ["insplit (target-labeled)", "synsql-topk", "synsql-soft", "synsql-all",
-         "synsql-random", "synsql-far", "synsql-topk +true level",
-         "synsql-oracle (bound)"]
+ORDER = ["insplit (target-labeled)", "synsql-topk", "synsql-topk-struct",
+         "synsql-soft", "synsql-all", "synsql-random", "synsql-far",
+         "synsql-topk +true level", "synsql-oracle (bound)"]
 
 
 def main():
@@ -26,12 +26,14 @@ def main():
         print(f"| `{p}` | " + " | ".join(f"{per[t]['std']:.4f}" for t in tgts) + " |")
 
     print("\n### Does distance predict prior error?\n")
-    print("| target | corr(d, prior MAE) | nearest d | farthest d |")
-    print("|---|---|---|---|")
+    print("| target | corr(d_tfidf, priorMAE) | corr(d_tfidf, centeredMAE) | "
+          "corr(d_struct, priorMAE) | corr(d_tfidf, subset EX) |")
+    print("|---|---|---|---|---|")
     for t, v in r["targets"].items():
-        pc = v["per_cand"]
-        print(f"| {t} | {v['rho_dist_vs_err']:+.3f} | {min(pc['dist']):.3f} "
-              f"| {max(pc['dist']):.3f} |")
+        print(f"| {t} | {v['rho_dist_vs_err']:+.3f} | "
+              f"{v.get('rho_dist_vs_err_centered', float('nan')):+.3f} | "
+              f"{v.get('rho_struct_vs_err', float('nan')):+.3f} | "
+              f"{v.get('rho_dist_vs_subsetEX', float('nan')):+.3f} |")
 
     for t, v in r["targets"].items():
         print(f"\n### {t}  (M={v['M']}, N={v['N']}, "

@@ -27,7 +27,7 @@ from zoo.config import ZooConfig, ARTIFACT_ROOT                      # noqa: E40
 from zoo.datasets import load_split                                  # noqa: E402
 from synsql.config import (N_CANDIDATES, N_PROBE, TOP_K, SEED, RESULTS)  # noqa: E402
 from synsql.subsets import load_built                                # noqa: E402
-from synsql.retrieve import SubsetRetriever                          # noqa: E402
+from synsql.retrieve import SubsetRetriever, StructuralRetriever     # noqa: E402
 from synsql.prior import (probe_subsets, prior_from_probes,           # noqa: E402
                           prior_soft)
 
@@ -155,6 +155,7 @@ def main(partition="db", probe=False, k=TOP_K, n_cand=N_CANDIDATES,
 
     ret = retrievers[partition]
     subs = parts[partition]
+    struct = StructuralRetriever(recs, subs)
     cands = pick_candidates(ret.mu, n_cand, seed=seed)
     print(f"[cand] {n_cand} diverse candidate subsets from '{partition}': {cands}")
 
@@ -181,25 +182,35 @@ def main(partition="db", probe=False, k=TOP_K, n_cand=N_CANDIDATES,
             print(f"[warn] {ds}: member mismatch, skipping")
             continue
         cos, _ = ret.distances(items)
-        d_c = cos[cands]
+        dstr, _ = struct.distances(items)
+        d_c, dstr_c = cos[cands], dstr[cands]
         order = np.argsort(d_c)
         top = [cands[i] for i in order[:k]]
         far = [cands[i] for i in order[-k:]]
         rnd = [cands[i] for i in rng.permutation(len(cands))[:k]]
+        top_s = [cands[i] for i in np.argsort(dstr_c)[:k]]
 
         # the scientific core: does DISTANCE predict PRIOR ERROR across candidates?
-        errs, ds_list = [], []
+        errs, errs_c, ds_list, sub_ex = [], [], [], []
         for s in cands:
             a, sg, n = prior_from_probes(store, [s])
+            bias = float(np.mean(a - run.true_acc))
             errs.append(float(np.mean(np.abs(a - run.true_acc)) * 100))
+            errs_c.append(float(np.mean(np.abs(a - bias - run.true_acc)) * 100))
             ds_list.append(float(cos[s]))
-        rho = float(np.corrcoef(ds_list, errs)[0, 1])
+            sub_ex.append(float(a.mean()))
+        cc = lambda x, y: float(np.corrcoef(x, y)[0, 1])          # noqa: E731
+        rho = cc(ds_list, errs)
+        rho_c = cc(ds_list, errs_c)
+        rho_struct = cc(list(dstr[cands]), errs)
+        rho_ex = cc(ds_list, sub_ex)
         # ORACLE: the k subsets a perfect retriever would pick (chosen by TRUE prior
         # error, which needs target labels). Upper bound on what retrieval can buy.
         orc = [cands[i] for i in np.argsort(errs)[:k]]
 
         conds = {"insplit (target-labeled)": (run.prior, run.prior_sigma),
                  "synsql-topk": prior_from_probes(store, top)[:2],
+                 "synsql-topk-struct": prior_from_probes(store, top_s)[:2],
                  "synsql-soft": prior_soft(store, cands, d_c)[:2],
                  "synsql-random": prior_from_probes(store, rnd)[:2],
                  "synsql-far": prior_from_probes(store, far)[:2],
@@ -213,13 +224,18 @@ def main(partition="db", probe=False, k=TOP_K, n_cand=N_CANDIDATES,
         res = {c: score_prior(run, p, s) for c, (p, s) in conds.items()}
         out["targets"][ds] = dict(
             true_acc=run.true_acc.tolist(), M=int(run.M), N=int(run.N),
-            top=top, far=far, rnd=rnd, oracle=orc,
+            top=top, far=far, rnd=rnd, oracle=orc, top_struct=top_s,
             dist_top=[float(cos[s]) for s in top],
             dist_far=[float(cos[s]) for s in far],
-            per_cand=dict(dist=ds_list, prior_mae=errs), rho_dist_vs_err=rho,
+            per_cand=dict(dist=ds_list, dist_struct=[float(x) for x in dstr[cands]],
+                          prior_mae=errs, prior_mae_c=errs_c, subset_ex=sub_ex),
+            rho_dist_vs_err=rho, rho_dist_vs_err_centered=rho_c,
+            rho_struct_vs_err=rho_struct, rho_dist_vs_subsetEX=rho_ex,
             conditions=res)
         print(f"\n=== {ds} (true EX mean {run.true_acc.mean():.3f}) ===")
-        print(f"  corr(distance, prior MAE) over {len(cands)} subsets = {rho:+.3f}")
+        print(f"  corr over {len(cands)} subsets: "
+              f"d_tfidf-vs-priorMAE={rho:+.3f}  d_tfidf-vs-centeredMAE={rho_c:+.3f}  "
+              f"d_struct-vs-priorMAE={rho_struct:+.3f}  d_tfidf-vs-subsetEX={rho_ex:+.3f}")
         print(f"  {'condition':26s}{'priorMAE':>9s}{'bias':>8s}{'MAE_c':>8s}"
               f"{'priorKen':>9s}{'PE MAE':>9s}{'PE Ken':>8s}{'PE Top1':>8s}")
         for c, r in res.items():

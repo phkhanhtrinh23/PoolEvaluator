@@ -235,6 +235,19 @@ sweep** (more budget monotonically lowers MAE), and a **synthesis-judge ablation
 honest negative — letting the judge *write* SQL doesn't help on hard data): see
 **[`experiments/ANALYSIS.md`](experiments/ANALYSIS.md)**.
 
+**Where does the prior come from?** The seen prior is the anchor that fixes the gauge,
+but in the runs above it is measured on a *labeled split of the target benchmark* — the
+one thing a deployed operator lacks. [`synsql/`](synsql/README.md) tests replacing it
+with a prior estimated on **SynSQL-2.5M** subsets *retrieved* to match the unlabeled
+target (2.54M records, 16,583 live DBs, ~1K-item subsets, 8,000 executed generations).
+Result, in short: **retrieval alignment is uninformative** (corr(distance, prior error)
+≈ 0 on all five targets), but the label-free corpus prior recovers the pool's *relative*
+ability almost exactly — after removing a single shared offset its MAE is **2.98–3.89
+vs the target-labeled prior's 2.80**. The entire gap is one scalar: the gauge. Buying
+just that back costs **~10–40 target labels** instead of a 120-item labeled split,
+which composes directly with the judge-in-the-loop budget above. Full write-up:
+**[`experiments/SYNSQL_PRIOR.md`](experiments/SYNSQL_PRIOR.md)**.
+
 ---
 
 ## Results (this repository's simulator)
@@ -323,6 +336,7 @@ pooleval/        core: config, simulator, kernel, latent EM, fusion, inference, 
 baselines/       B1 Independent, B2 Majority, B3 Dawid–Skene, B4 Agreement-on-the-line, B5 LLM-as-judge (preference proxy)
 experiments/     run_rq1..run_rq8, run_all; run_active (candidate-coverage + judge budget); ACTIVE_POOLEVAL.md
 zoo/             real multi-dataset pipeline; datasets.py (Spider/BIRD/SQLFlow/Spider2 loaders), judge.py (gpt-5-mini RealJudge), run_multi.py, run_active.py
+synsql/          SynSQL-2.5M as a retrievable prior corpus: ingest, ~1K-subset partitionings, MMD retrieval, subset probing, gauge label-budget
 configs/         default.yaml (mirrors pooleval/config.py)
 scripts/         reproduce_main.sh / .ps1
 tests/           test_smoke (pipeline; PoolEval-SQL lowest flip), test_active (constraint EM, judge, submodular, recovery)
