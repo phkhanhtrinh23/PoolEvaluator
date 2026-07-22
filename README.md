@@ -245,7 +245,11 @@ Result, in short: **retrieval alignment is uninformative** (corr(distance, prior
 ability almost exactly — after removing a single shared offset its MAE is **2.98–3.89
 vs the target-labeled prior's 2.80**. The entire gap is one scalar: the gauge. Buying
 just that back costs **~10–40 target labels** instead of a 120-item labeled split,
-which composes directly with the judge-in-the-loop budget above. Full write-up:
+which composes directly with the judge-in-the-loop budget above. A zero-cost
+source x target matrix over all five benchmarks shows the level gap is a property of
+being **out-of-domain**, not of SynSQL being synthetic — Spider→BIRD is off by 40.5 and
+Spider→Spider 2.0-local by 72.3, both worse than SynSQL — while centered MAE stays in
+1.8–4.4 for *every* source. Full write-up:
 **[`experiments/SYNSQL_PRIOR.md`](experiments/SYNSQL_PRIOR.md)**.
 
 ---
@@ -336,7 +340,7 @@ pooleval/        core: config, simulator, kernel, latent EM, fusion, inference, 
 baselines/       B1 Independent, B2 Majority, B3 Dawid–Skene, B4 Agreement-on-the-line, B5 LLM-as-judge (preference proxy)
 experiments/     run_rq1..run_rq8, run_all; run_active (candidate-coverage + judge budget); ACTIVE_POOLEVAL.md
 zoo/             real multi-dataset pipeline; datasets.py (Spider/BIRD/SQLFlow/Spider2 loaders), judge.py (gpt-5-mini RealJudge), run_multi.py, run_active.py
-synsql/          SynSQL-2.5M as a retrievable prior corpus: ingest, ~1K-subset partitionings, MMD retrieval, subset probing, gauge label-budget
+synsql/          SynSQL-2.5M as a retrievable prior corpus: ingest, ~1K-subset partitionings, MMD retrieval, subset probing, gauge label-budget, cross-benchmark prior matrix
 configs/         default.yaml (mirrors pooleval/config.py)
 scripts/         reproduce_main.sh / .ps1
 tests/           test_smoke (pipeline; PoolEval-SQL lowest flip), test_active (constraint EM, judge, submodular, recovery)

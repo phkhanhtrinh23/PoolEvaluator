@@ -1,8 +1,9 @@
 # NE-3: Retrieval-aligned priors from SynSQL-2.5M
 
 **Status:** measured (real models, real execution). Code: [`synsql/`](../synsql/README.md).
-Console: `results/synsql_prior_console.txt`; raw: `results/synsql_prior.json`,
-`results/synsql_retrieval_dry.json`.
+Console: `results/synsql_prior_console.txt`. Raw results: `results/synsql_prior.json`,
+`results/synsql_retrieval_dry.json`, `results/synsql_level_budget.json`,
+`results/synsql_cross_prior.json`.
 
 ## The problem this attacks
 
@@ -180,6 +181,52 @@ runs the wrong way on BIRD/minidev/spider2local, where the upward-biased prior c
 the inflation (PoolEval MAE 26.4 / 30.4 / 43.0 vs 17.2 / 13.8 / 9.2). Two large errors
 cancelling is not a method.
 
+## R5. The level problem is not SynSQL's fault — no out-of-domain source fixes it
+
+The comparison so far is corpus-vs-*the target's own labeled split*, which leaves out the
+middle ground: what if the prior comes from a **different real benchmark**? Every
+dataset's source-split prior is already measured, so the full source × target matrix
+costs **zero generation** (`synsql/cross_prior.py`).
+
+Raw prior MAE, rows = prior source, `*` = in-domain (the diagonal):
+
+| prior from | spider | bird | bird_minidev | sqlflow | spider2local |
+|---|---|---|---|---|---|
+| spider | **3.73\*** | 40.47 | 50.27 | 34.93 | 72.33 |
+| bird | 34.10 | **3.47\*** | 13.10 | 2.60 | 35.17 |
+| bird_minidev | 47.52 | 10.12 | **2.48\*** | 15.65 | 21.75 |
+| sqlflow | 29.18 | 8.38 | 18.02 | **3.82\*** | 40.08 |
+| spider2local | 65.52 | 28.12 | 18.32 | 33.65 | **4.58\*** |
+| SynSQL top-k | 17.07 | 23.93 | 33.73 | 15.44 | 52.84 |
+
+Centered MAE (level removed), summarised:
+
+| prior source | spider | bird | bird_minidev | sqlflow | spider2local |
+|---|---|---|---|---|---|
+| in-domain | 2.82 | 1.83 | 2.48 | 2.28 | 4.58 |
+| best cross-benchmark | 1.89 | 2.65 | 2.98 | 1.64 | 3.50 |
+| mean cross-benchmark | 3.66 | 4.13 | 4.35 | 3.48 | 4.38 |
+| SynSQL top-k | 3.04 | 2.83 | 3.68 | 3.21 | 5.45 |
+
+Two things follow, and the first partially rehabilitates the corpus idea:
+
+1. **The level catastrophe is a property of being out-of-domain, not of SynSQL being
+   synthetic.** Spider→BIRD is off by 40.5, Spider→Spider2.0-local by 72.3 — both *worse*
+   than SynSQL. SynSQL beats the mean cross-benchmark prior on 2 of 5 targets (spider
+   17.1 vs 44.1, sqlflow 15.4 vs 21.7). As a prior corpus it is competitive with, and
+   sometimes better than, borrowing another real benchmark.
+2. **Relative ability transfers from essentially anywhere. The level transfers from
+   nowhere.** Centered MAE sits in 1.8–4.4 for *every* source — in-domain, cross-benchmark,
+   or synthetic corpus — while raw MAE spans 2.5–72.3 purely through the offset. This is
+   R2 generalised: the gauge is the only thing an in-domain split actually buys.
+
+Two confounds to respect before citing this matrix. **`sqlflow` is BIRD-derived** (it
+reuses the BIRD databases), which is why bird→sqlflow scores 2.60 — better than sqlflow's
+own in-domain prior. That is leakage, not transfer, and the same caution applies to the
+bird↔bird_minidev cells. **`spider2local` has N=24 and true EX 0.05**, so it is noisy as
+both source and target, and as a *source* its prior is nearly all zeros, which is why its
+row has the worst centered MAE in the table (7.2–8.0).
+
 ---
 
 # What this means for the paper
@@ -190,6 +237,11 @@ cancelling is not a method.
    R2 shows the residual is a pure gauge offset. The honest statement is *label-free up
    to a scalar gauge*, and R3 prices that gauge at **~10–40 labels**, down from a full
    labeled split.
+1b. **SynSQL is a defensible prior corpus — just not for the reason one would assume.**
+   R5 shows it is competitive with (and on 2 of 5 targets better than) borrowing another
+   real benchmark, and that the level gap afflicts every out-of-domain source equally.
+   What does *not* survive is any claim that domain coverage or retrieval alignment is
+   what makes it work: the shape transfers from anywhere, aligned or not.
 2. **This is a positive result for the Active PoolEval extension already in this repo.**
    The gauge needs ~10–40 target labels — precisely the budget the judge-in-the-loop
    module (`pooleval/active`, `zoo/judge.py`) operates at. The natural composition is:
@@ -223,5 +275,6 @@ python -m synsql.subsets --sample 400000               # 3 partitionings
 python -m synsql.run_prior --dry                       # separability, no API spend
 python -m synsql.run_prior --partition kmeans --probe --workers 12
 python -m synsql.level_budget                          # gauge label budget (no API)
+python -m synsql.cross_prior                           # source x target matrix (no API)
 python -m synsql.report                                # markdown tables
 ```
