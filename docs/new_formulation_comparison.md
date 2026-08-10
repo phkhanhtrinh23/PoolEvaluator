@@ -265,7 +265,7 @@ $\gamma_j$, because both parameters control agreement with a wrong pseudo-label.
 Estimate collision rates on the labeled source/meta dataset, where correctness is
 known, and freeze or strongly regularize them on the held-out target. A group-level
 parameter is more stable than a separate parameter per model:
-$\gamma_g=\frac{\#\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i,r_i^j=\hat y_i\}}{\#\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i\}}$.
+$\gamma_g=\frac{\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i,r_i^j=\hat y_i\}}{\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i\}}$.
 
 The source procedure must use exactly the same pseudo-label selector as the target
 procedure. The recommended workflow is:
