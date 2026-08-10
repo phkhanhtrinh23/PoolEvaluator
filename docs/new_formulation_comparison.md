@@ -221,6 +221,67 @@ $\beta=0.210$, old Kendall is $0.60$, and new Kendall is $-0.47$. The inferred
 ordering is largely reversed even though the new method's aggregate MAE happens to
 be slightly smaller.
 
+### Collision-aware binary formulation for case 3
+
+The binary observation $C_i^j$ can still be used. The correction is to distinguish
+“the model is wrong” from “the model is wrong and happens to produce the same wrong
+table as the pseudo-label.” Define a wrong-result collision parameter
+$\gamma_j=P(r_i^j=\hat y_i\mid Z_i^j=0,\hat y_i\ne y_i)$.
+
+The four relevant cases are:
+
+- If the pseudo-label is correct and the model is correct, then
+  $P(C_i^j=1\mid Z_i^j=1,\hat y_i=y_i)=1$.
+- If the pseudo-label is correct and the model is wrong, then
+  $P(C_i^j=1\mid Z_i^j=0,\hat y_i=y_i)=0$.
+- If the pseudo-label is wrong and the model is correct, then
+  $P(C_i^j=1\mid Z_i^j=1,\hat y_i\ne y_i)=0$.
+- If both are wrong, they agree only when their wrong result tables collide, so
+  $P(C_i^j=1\mid Z_i^j=0,\hat y_i\ne y_i)=\gamma_j$.
+
+After marginalizing whether the pseudo-label is correct, the corrected observation
+probabilities are $P(C_i^j=1\mid Z_i^j=1)=\beta$ and
+$P(C_i^j=1\mid Z_i^j=0)=(1-\beta)\gamma_j$. Their complements are
+$P(C_i^j=0\mid Z_i^j=1)=1-\beta$ and
+$P(C_i^j=0\mid Z_i^j=0)=1-(1-\beta)\gamma_j$.
+
+The corrected E-step has two cases. When $C_i^j=1$, use
+$\tau_i^j=\frac{\alpha_j\beta}{\alpha_j\beta+(1-\alpha_j)(1-\beta)\gamma_j}$.
+When $C_i^j=0$, use
+$\tau_i^j=\frac{\alpha_j(1-\beta)}{\alpha_j(1-\beta)+(1-\alpha_j)[1-(1-\beta)\gamma_j]}$.
+
+The model-accuracy M-step remains closed form:
+$\alpha_j^{\mathrm{new}}=\frac{1}{N}\sum_i\tau_i^j$.
+
+The original closed-form update for $\beta$ no longer applies after introducing
+$\gamma_j$. With fixed $\gamma_j$, $\beta$ can be updated by bounded one-dimensional
+maximization. Alternatively, introduce an explicit latent variable
+$H_i=\mathbf{1}(\hat y_i=y_i)$ and derive an augmented EM, but then $H_i$ is shared
+across models and the conditional structure must be handled explicitly. It would be
+incorrect to keep the old $\beta$ update unchanged.
+
+Binary target observations alone cannot reliably identify $\beta$ and every
+$\gamma_j$, because both parameters control agreement with a wrong pseudo-label.
+Estimate collision rates on the labeled source/meta dataset, where correctness is
+known, and freeze or strongly regularize them on the held-out target. A group-level
+parameter is more stable than a separate parameter per model:
+$\gamma_g=\frac{\#\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i,r_i^j=\hat y_i\}}{\#\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i\}}$.
+
+The source procedure must use exactly the same pseudo-label selector as the target
+procedure. The recommended workflow is:
+
+1. run the old kernel/prior/provenance/verifier scorer on labeled source items;
+2. select one source pseudo-label per item;
+3. measure $\gamma_g$ from cases where both the model and pseudo-label are wrong;
+4. freeze or place a strong source-derived prior on $\gamma_g$ for target inference;
+5. retain a Beta prior on $\alpha_j$ derived from source accuracy instead of using
+   source accuracy only as initialization;
+6. estimate target $\alpha_j$ and $\beta$ with the corrected likelihood.
+
+This solves case 3 probabilistically while retaining binary $C_i^j$. It does not
+recover information already discarded by binarization, so keeping the full result
+classes remains useful for estimating collision structure and provenance effects.
+
 ### Why the old method is relatively better
 
 The old method retains the full executed-result class for every model. It can
