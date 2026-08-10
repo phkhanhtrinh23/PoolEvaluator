@@ -352,6 +352,23 @@ tests/           test_smoke (pipeline; PoolEval-SQL lowest flip), test_active (c
 python tests/test_smoke.py && python tests/test_active.py     # or: pytest -q
 ```
 
+## Experimental closed-form formulation
+
+The alternative pseudo-label agreement EM in `new_formulation/` is implemented
+alongside the original estimator in [`pooleval/new_formulation.py`](pooleval/new_formulation.py).
+It uses old PoolEval's kernel/prior/provenance/verifier score to fix a pseudo-label,
+then applies the document's closed-form EM updates to the binary agreement matrix.
+The paired RQ1--RQ8 comparison and full interpretation are in
+[`experiments/NEW_FORMULATION_RESULTS.md`](experiments/NEW_FORMULATION_RESULTS.md).
+The evaluation on saved real Spider, BIRD, SQLFlow, and BIRD-MiniDev model-zoo
+artifacts is reported in
+[`experiments/NEW_FORMULATION_REAL_RESULTS.md`](experiments/NEW_FORMULATION_REAL_RESULTS.md).
+
+```bash
+python experiments/run_new_formulation_comparison.py --seeds 8
+python -m zoo.new_formulation_real --bootstrap 500
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -5,10 +5,12 @@ The paper names the framework PoolEval-SQL; this package is imported as `pooleva
 and its estimator is the `PoolEval` class."""
 from .config import Config
 from .inference import PoolEval
+from .new_formulation import NewFormulationPoolEval, agreement_em
 from .active import ActivePoolEval, ActiveConfig, SimulatedJudge
 from .data import simulate, PoolRun
 from . import metrics, kernel
 
-__all__ = ["Config", "PoolEval", "ActivePoolEval", "ActiveConfig", "SimulatedJudge",
-           "simulate", "PoolRun", "metrics", "kernel"]
+__all__ = ["Config", "PoolEval", "NewFormulationPoolEval", "agreement_em",
+           "ActivePoolEval", "ActiveConfig", "SimulatedJudge", "simulate", "PoolRun",
+           "metrics", "kernel"]
 __version__ = "0.1.0"
