@@ -250,8 +250,10 @@ $\tau_i^j=\frac{\alpha_j\beta}{\alpha_j\beta+(1-\alpha_j)(1-\beta)\gamma_j}$.
 When $C_i^j=0$, use
 $\tau_i^j=\frac{\alpha_j(1-\beta)}{\alpha_j(1-\beta)+(1-\alpha_j)[1-(1-\beta)\gamma_j]}$.
 
-The model-accuracy M-step remains closed form:
-$\alpha_j^{\mathrm{new}}=\frac{1}{N}\sum_i\tau_i^j$.
+The model-accuracy M-step remains closed form. Without a source prior it is
+$\alpha_j^{\mathrm{new}}=\frac{1}{N}\sum_i\tau_i^j$. With source accuracy
+$\pi_j$ and effective source sample size $s_j$, the reported MAP estimator uses
+$\alpha_j^{\mathrm{new}}=\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$.
 
 The original closed-form update for $\beta$ no longer applies after introducing
 $\gamma_j$. With fixed $\gamma_j$, $\beta$ can be updated by bounded one-dimensional
@@ -260,12 +262,32 @@ $H_i=\mathbf{1}(\hat y_i=y_i)$ and derive an augmented EM, but then $H_i$ is sha
 across models and the conditional structure must be handled explicitly. It would be
 incorrect to keep the old $\beta$ update unchanged.
 
+For fixed $\tau$ and $\gamma$, the scalar objective is
+$Q(\beta)=\sum_{i,j}\tau_i^j[C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+(1-\tau_i^j)[C_i^j\log((1-\beta)\gamma_{g(j)})+(1-C_i^j)\log(1-(1-\beta)\gamma_{g(j)})]$.
+
+Its derivative is
+$\frac{\partial Q}{\partial\beta}=\sum_{i,j}\tau_i^j[\frac{C_i^j}{\beta}-\frac{1-C_i^j}{1-\beta}]+(1-\tau_i^j)[-\frac{C_i^j}{1-\beta}+\frac{(1-C_i^j)\gamma_{g(j)}}{1-(1-\beta)\gamma_{g(j)}}]$.
+There is no algebraic solution to $\frac{\partial Q}{\partial\beta}=0$, so maximize
+$Q$ over $\epsilon\le\beta\le1-\epsilon$ with a bounded scalar solver such as
+Brent's method. The implementation minimizes $-Q(\beta)$ with
+`scipy.optimize.minimize_scalar(method="bounded")`. This is inexpensive because
+only one scalar is optimized per EM iteration.
+
+In real experiments, the unregularized optimum often reached $\beta\approx0$ or
+$\beta\approx1$. The reported estimator therefore uses a source-derived prior
+$\beta\sim\operatorname{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$, where
+$\beta_0$ is source pseudo-label accuracy and $s_\beta=120$. The scalar M-step
+maximizes the regularized objective
+$Q_{MAP}(\beta)=Q(\beta)+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
+This keeps $\beta$ away from unsupported boundary solutions while using no target
+gold labels.
+
 Binary target observations alone cannot reliably identify $\beta$ and every
 $\gamma_j$, because both parameters control agreement with a wrong pseudo-label.
 Estimate collision rates on the labeled source/meta dataset, where correctness is
 known, and freeze or strongly regularize them on the held-out target. A group-level
 parameter is more stable than a separate parameter per model:
-$\gamma_g=\frac{\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i,r_i^j=\hat y_i\}}{\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i\}}$.
+$\gamma_g=\frac{\#\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i,r_i^j=\hat y_i\}}{\#\{(j,i):g(j)=g,Z_i^j=0,\hat y_i\ne y_i\}}$.
 
 The source procedure must use exactly the same pseudo-label selector as the target
 procedure. The recommended workflow is:
@@ -281,6 +303,46 @@ procedure. The recommended workflow is:
 This solves case 3 probabilistically while retaining binary $C_i^j$. It does not
 recover information already discarded by binarization, so keeping the full result
 classes remains useful for estimating collision structure and provenance effects.
+
+### Real results after solving case 3
+
+The collision-aware estimator was evaluated on four real datasets using 10 real
+models, 150 target questions per dataset, and 500 paired item-bootstrap resamples.
+Because item-level train execution classes were not saved, each target's
+$\gamma_g$ was estimated with a leakage-safe leave-one-dataset-out protocol using
+the other three labeled real zoo artifacts. Each target's saved train/source
+accuracy remained the explicit prior for $\alpha_j$.
+
+| Dataset | Source prior MAE ↓ | Old MAE ↓ | Uncorrected binary MAE ↓ | Case-3 MAE ↓ | Old Kendall ↑ | Case-3 Kendall ↑ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Spider | **3.73** | 13.38 | 19.59 | 11.93 | **0.71** | 0.66 |
+| SQLFlow | **3.82** | **11.28** | 16.38 | 12.01 | 0.72 | 0.72 |
+| BIRD | **3.47** | 17.20 | 16.32 | 17.22 | 0.60 | **0.69** |
+| BIRD-MiniDev | **2.48** | 13.80 | 20.90 | 3.85 | 0.58 | **0.63** |
+
+The case-3 correction removes the catastrophic ranking reversal of the uncorrected
+binary model. SQLFlow Kendall changes from $-0.67$ to $0.72$, BIRD from $-0.47$ to
+$0.69$, and BIRD-MiniDev from $-0.49$ to $0.63$.
+
+Compared directly with old PoolEval, the results are mixed. Case 3 improves Spider
+point MAE by 1.45 points, is 0.73 points worse on SQLFlow, is effectively tied on
+BIRD MAE while improving its point ranking, and improves BIRD-MiniDev point MAE by
+9.95 points. The BIRD-MiniDev bootstrap interval is wide, so that large improvement
+is not yet statistically stable.
+
+The paired 95% intervals for `case 3 − old` MAE are Spider
+$-1.57[-3.25,0.07]$, SQLFlow $+0.64[0.03,1.17]$, BIRD
+$-0.06[-0.72,0.46]$, and BIRD-MiniDev $-8.85[-14.94,1.03]$. Only the small
+SQLFlow degradation excludes zero.
+
+The anchored target estimates were $\beta=0.922$ on Spider, $\beta=0.798$ on
+SQLFlow, $\beta=0.842$ on BIRD, and $\beta=0.257$ on BIRD-MiniDev. These are MAP
+parameters under the approximate model, not direct empirical pseudo-label
+accuracies.
+
+The correction is therefore useful but not a general victory over old PoolEval. It
+repairs the original binary model's real-data ranking failure, but the source/train
+prior remains the best absolute accuracy estimator on every dataset.
 
 ### Why the old method is relatively better
 
@@ -299,10 +361,11 @@ binary formulation.
 
 - Use the source/train prior when the goal is absolute execution-accuracy
   estimation.
-- Prefer the old method over the current new formulation when the goal is ranking
-  the real model pool.
-- Do not replace the old estimator with the current binary formulation.
-- Extend the new likelihood with a wrong-result collision parameter such as
-  $\gamma=P(r=\hat y\mid Z=0,\hat y\ne y)$.
+- Do not use the uncorrected binary formulation; it reverses rankings on hard real
+  datasets.
+- Use the collision-aware case-3 formulation when binary $C_i^j$ is required, but
+  do not claim it consistently beats old PoolEval yet.
+- Prefer old PoolEval or the source prior until the case-3 improvement is validated
+  on additional independent model pools.
 - Keep train-derived accuracy as an explicit prior in the objective instead of
   using it only to initialize $\alpha_j$.
