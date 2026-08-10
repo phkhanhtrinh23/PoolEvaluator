@@ -250,8 +250,8 @@ the pseudo-labels. Target $Z$, $H$, $y$, and gold execution accuracy are withhel
 #### Step 2: corrected generative assumptions
 
 The model-correctness prior is $Z_i^j\mid\alpha_j\sim
-\operatorname{Bernoulli}(\alpha_j)$. Pseudo-label correctness is
-$H_i\mid\beta\sim\operatorname{Bernoulli}(\beta)$.
+\mathrm{Bernoulli}(\alpha_j)$. Pseudo-label correctness is
+$H_i\mid\beta\sim\mathrm{Bernoulli}(\beta)$.
 
 Conditional agreement is deterministic in three cases and probabilistic in the
 fourth:
@@ -279,9 +279,9 @@ model and pseudo-label are both wrong, and $h_g$ counts those cells where their
 wrong executed tables are identical. The added 1 and 2 are Laplace smoothing.
 
 Source model accuracy $\pi_j$ becomes an explicit prior
-$\alpha_j\sim\operatorname{Beta}(1+s_j\pi_j,1+s_j(1-\pi_j))$, where $s_j$ is the
+$\alpha_j\sim\mathrm{Beta}(1+s_j\pi_j,1+s_j(1-\pi_j))$, where $s_j$ is the
 effective source sample size. Source pseudo-label accuracy $\beta_0$ becomes
-$\beta\sim\operatorname{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$.
+$\beta\sim\mathrm{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$.
 
 The experiments freeze $\hat\gamma_g$, use $s_j\approx120$ from the stored source
 prior variance, and set $s_\beta=120$. No target gold is used to construct these
@@ -414,6 +414,32 @@ accuracies.
 The correction is therefore useful but not a general victory over old PoolEval. It
 repairs the original binary model's real-data ranking failure, but the source/train
 prior remains the best absolute accuracy estimator on every dataset.
+
+### LLM-judge pseudo-label updates after case-3 EM
+
+The saved real `gpt-5-mini` verdicts were applied after the initial case-3 fit. If
+the judge selected another candidate class, that class replaced $\hat y_i$. If it
+rejected all candidates, a fresh absent class replaced $\hat y_i$, making
+$C_i^j=0$ for every model on that item. The affected columns of $C$ were rebuilt and
+case-3 EM was rerun at cumulative budgets 3, 6, 9, and 12.
+
+| Dataset | Case-3 MAE ↓ | MAE after 12 verdicts ↓ | Case-3 Kendall ↑ | Kendall after 12 verdicts ↑ |
+| --- | ---: | ---: | ---: | ---: |
+| Spider | 11.93 | **11.00** | **0.66** | 0.52 |
+| SQLFlow | 12.01 | **11.51** | 0.72 | 0.72 |
+| BIRD | 17.22 | **16.49** | **0.69** | 0.60 |
+| BIRD-MiniDev | 3.85 | **3.69** | 0.63 | 0.63 |
+
+Conditional paired bootstrap intervals show stable MAE improvements on Spider,
+SQLFlow, and BIRD, but no stable ranking improvement. The judge changed 7, 8, 11,
+and 9 pseudo-labels respectively, and issued 0, 1, 2, and 4 “none” verdicts.
+
+These verdicts were selected by the saved old-method active acquisition order. The
+original databases and questions needed for new LLM calls are unavailable, so this
+is a replay after case-3 EM rather than a new case-3-specific acquisition run. The
+result supports trusting “none” detections and using softer confidence weights for
+candidate picks: absolute calibration improves, but unreliable picks can damage
+ranking and Top-1 selection.
 
 ### Why the old method is relatively better
 

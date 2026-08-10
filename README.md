@@ -366,11 +366,15 @@ artifacts is reported in
 The collision-aware case-3 extension and its leave-one-dataset-out real evaluation
 are reported in
 [`experiments/COLLISION_FORMULATION_REAL_RESULTS.md`](experiments/COLLISION_FORMULATION_REAL_RESULTS.md).
+The replay of saved real `gpt-5-mini` pseudo-label corrections after case-3 EM is
+reported in
+[`experiments/COLLISION_ACTIVE_REAL_RESULTS.md`](experiments/COLLISION_ACTIVE_REAL_RESULTS.md).
 
 ```bash
 python experiments/run_new_formulation_comparison.py --seeds 8
 python -m zoo.new_formulation_real --bootstrap 500
 python -m zoo.collision_formulation_real --bootstrap 500
+python -m zoo.collision_active_real --bootstrap 400
 ```
 
 ## License
