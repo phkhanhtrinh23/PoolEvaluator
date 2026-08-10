@@ -36,7 +36,7 @@ sample size and $\pi_j$ is source accuracy, then the closed-form accuracy update
 $\alpha_j^{new}=\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$.
 
 This is equivalent to the MAP update under
-$\alpha_j\sim\operatorname{Beta}(1+s_j\pi_j,1+s_j(1-\pi_j))$.
+$\alpha_j\sim\mathrm{Beta}(1+s_j\pi_j,1+s_j(1-\pi_j))$.
 The stored source-prior variance implies $s_j\approx120$ for these artifacts.
 
 ## How beta is maximized
@@ -53,7 +53,7 @@ or gradient-training problem.
 
 Without a source anchor, the real likelihood often puts $\beta$ at 0 or 1. The
 reported case-3 estimator therefore adds the leakage-safe source pseudo-label prior
-$\beta\sim\operatorname{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$ with
+$\beta\sim\mathrm{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$ with
 $s_\beta=120$. Its log-prior is included in the scalar objective.
 
 ## Real-data protocol
