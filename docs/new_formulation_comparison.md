@@ -228,59 +228,130 @@ The binary observation $C_i^j$ can still be used. The correction is to distingui
 table as the pseudo-label.” Define a wrong-result collision parameter
 $\gamma_j=P(r_i^j=\hat y_i\mid Z_i^j=0,\hat y_i\ne y_i)$.
 
-The four relevant cases are:
+#### Step 1: variables and observations
 
-- If the pseudo-label is correct and the model is correct, then
-  $P(C_i^j=1\mid Z_i^j=1,\hat y_i=y_i)=1$.
-- If the pseudo-label is correct and the model is wrong, then
-  $P(C_i^j=1\mid Z_i^j=0,\hat y_i=y_i)=0$.
-- If the pseudo-label is wrong and the model is correct, then
-  $P(C_i^j=1\mid Z_i^j=1,\hat y_i\ne y_i)=0$.
-- If both are wrong, they agree only when their wrong result tables collide, so
-  $P(C_i^j=1\mid Z_i^j=0,\hat y_i\ne y_i)=\gamma_j$.
+For each target item $i$ and model $j$:
 
-After marginalizing whether the pseudo-label is correct, the corrected observation
-probabilities are $P(C_i^j=1\mid Z_i^j=1)=\beta$ and
-$P(C_i^j=1\mid Z_i^j=0)=(1-\beta)\gamma_j$. Their complements are
-$P(C_i^j=0\mid Z_i^j=1)=1-\beta$ and
-$P(C_i^j=0\mid Z_i^j=0)=1-(1-\beta)\gamma_j$.
+- $r_i^j$ is the executed result table produced by model $j$;
+- $y_i$ is the unknown correct result table;
+- $\hat y_i$ is the fixed pseudo-label selected by the old
+  kernel/prior/provenance/verifier scorer;
+- $C_i^j=\mathbf{1}(r_i^j=\hat y_i)$ is observed binary agreement;
+- $Z_i^j=\mathbf{1}(r_i^j=y_i)$ is latent model correctness;
+- $H_i=\mathbf{1}(\hat y_i=y_i)$ is pseudo-label correctness;
+- $\alpha_j=P(Z_i^j=1)$ is target accuracy for model $j$;
+- $\beta=P(H_i=1)$ is target pseudo-label quality;
+- $\gamma_g$ is the probability that a wrong model in provenance group $g$
+  produces exactly the same wrong table as a wrong pseudo-label.
 
-The corrected E-step has two cases. When $C_i^j=1$, use
-$\tau_i^j=\frac{\alpha_j\beta}{\alpha_j\beta+(1-\alpha_j)(1-\beta)\gamma_j}$.
-When $C_i^j=0$, use
-$\tau_i^j=\frac{\alpha_j(1-\beta)}{\alpha_j(1-\beta)+(1-\alpha_j)[1-(1-\beta)\gamma_j]}$.
+The target estimator observes only $C$, model groups, fixed source statistics, and
+the pseudo-labels. Target $Z$, $H$, $y$, and gold execution accuracy are withheld.
 
-The model-accuracy M-step remains closed form. Without a source prior it is
-$\alpha_j^{\mathrm{new}}=\frac{1}{N}\sum_i\tau_i^j$. With source accuracy
-$\pi_j$ and effective source sample size $s_j$, the reported MAP estimator uses
-$\alpha_j^{\mathrm{new}}=\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$.
+#### Step 2: corrected generative assumptions
 
-The original closed-form update for $\beta$ no longer applies after introducing
-$\gamma_j$. With fixed $\gamma_j$, $\beta$ can be updated by bounded one-dimensional
-maximization. Alternatively, introduce an explicit latent variable
-$H_i=\mathbf{1}(\hat y_i=y_i)$ and derive an augmented EM, but then $H_i$ is shared
-across models and the conditional structure must be handled explicitly. It would be
-incorrect to keep the old $\beta$ update unchanged.
+The model-correctness prior is $Z_i^j\mid\alpha_j\sim
+\operatorname{Bernoulli}(\alpha_j)$. Pseudo-label correctness is
+$H_i\mid\beta\sim\operatorname{Bernoulli}(\beta)$.
 
-For fixed $\tau$ and $\gamma$, the scalar objective is
-$Q(\beta)=\sum_{i,j}\tau_i^j[C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+(1-\tau_i^j)[C_i^j\log((1-\beta)\gamma_{g(j)})+(1-C_i^j)\log(1-(1-\beta)\gamma_{g(j)})]$.
+Conditional agreement is deterministic in three cases and probabilistic in the
+fourth:
+
+- $P(C_i^j=1\mid Z_i^j=1,H_i=1)=1$;
+- $P(C_i^j=1\mid Z_i^j=0,H_i=1)=0$;
+- $P(C_i^j=1\mid Z_i^j=1,H_i=0)=0$;
+- $P(C_i^j=1\mid Z_i^j=0,H_i=0,g(j)=g)=\gamma_g$.
+
+Marginalizing $H_i$ gives
+$P(C_i^j=1\mid Z_i^j=1)=\beta$ and
+$P(C_i^j=1\mid Z_i^j=0)=(1-\beta)\gamma_{g(j)}$.
+
+Define $q_{ij}=(1-\beta)\gamma_{g(j)}$. Then the observation likelihood can be
+written compactly as
+$P(C_i^j\mid Z_i^j=1)=\beta^{C_i^j}(1-\beta)^{1-C_i^j}$ and
+$P(C_i^j\mid Z_i^j=0)=q_{ij}^{C_i^j}(1-q_{ij})^{1-C_i^j}$.
+
+#### Step 3: source-derived parameters and priors
+
+Collision rates are estimated on labeled source/meta data using the same
+pseudo-label selector as target inference:
+$\hat\gamma_g=\frac{h_g+1}{n_g+2}$, where $n_g$ counts source cells for which the
+model and pseudo-label are both wrong, and $h_g$ counts those cells where their
+wrong executed tables are identical. The added 1 and 2 are Laplace smoothing.
+
+Source model accuracy $\pi_j$ becomes an explicit prior
+$\alpha_j\sim\operatorname{Beta}(1+s_j\pi_j,1+s_j(1-\pi_j))$, where $s_j$ is the
+effective source sample size. Source pseudo-label accuracy $\beta_0$ becomes
+$\beta\sim\operatorname{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$.
+
+The experiments freeze $\hat\gamma_g$, use $s_j\approx120$ from the stored source
+prior variance, and set $s_\beta=120$. No target gold is used to construct these
+quantities.
+
+#### Step 4: log posterior optimized by EM
+
+Ignoring constants, the expected complete-data log posterior is
+$Q(\alpha,\beta)=\sum_{i,j}\tau_i^j[\log\alpha_j+C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+(1-\tau_i^j)[\log(1-\alpha_j)+C_i^j\log q_{ij}+(1-C_i^j)\log(1-q_{ij})]+\sum_j s_j[\pi_j\log\alpha_j+(1-\pi_j)\log(1-\alpha_j)]+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
+
+Here, $\tau_i^j=P(Z_i^j=1\mid C_i^j,\alpha_j,\beta,\gamma_{g(j)})$ is recomputed in
+the E-step. EM alternates between updating $\tau$ and maximizing this objective over
+$\alpha$ and $\beta$ with $\gamma$ fixed.
+
+#### Step 5: E-step
+
+For an agreement $C_i^j=1$, Bayes' rule gives
+$\tau_i^j=\frac{\alpha_j\beta}{\alpha_j\beta+(1-\alpha_j)(1-\beta)\gamma_{g(j)}}$.
+
+For a disagreement $C_i^j=0$, Bayes' rule gives
+$\tau_i^j=\frac{\alpha_j(1-\beta)}{\alpha_j(1-\beta)+(1-\alpha_j)[1-(1-\beta)\gamma_{g(j)}]}$.
+
+These two expressions are evaluated elementwise for the complete $M\times N$
+agreement matrix.
+
+#### Step 6: closed-form alpha M-step
+
+Holding $\tau$ and $\beta$ fixed, differentiate $Q$ with respect to $\alpha_j$ and
+set the derivative to zero. The anchored MAP update is
+$\alpha_j^{new}=\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$.
+
+When $s_j=0$, this reduces to the original maximum-likelihood update
+$\alpha_j^{new}=\frac{1}{N}\sum_i\tau_i^j$.
+
+#### Step 7: numerical beta M-step
+
+Holding $\tau$ and $\alpha$ fixed, define
+$Q_\beta(\beta)=\sum_{i,j}\tau_i^j[C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+(1-\tau_i^j)[C_i^j\log((1-\beta)\gamma_{g(j)})+(1-C_i^j)\log(1-(1-\beta)\gamma_{g(j)})]+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
 
 Its derivative is
-$\frac{\partial Q}{\partial\beta}=\sum_{i,j}\tau_i^j[\frac{C_i^j}{\beta}-\frac{1-C_i^j}{1-\beta}]+(1-\tau_i^j)[-\frac{C_i^j}{1-\beta}+\frac{(1-C_i^j)\gamma_{g(j)}}{1-(1-\beta)\gamma_{g(j)}}]$.
-There is no algebraic solution to $\frac{\partial Q}{\partial\beta}=0$, so maximize
-$Q$ over $\epsilon\le\beta\le1-\epsilon$ with a bounded scalar solver such as
-Brent's method. The implementation minimizes $-Q(\beta)$ with
-`scipy.optimize.minimize_scalar(method="bounded")`. This is inexpensive because
-only one scalar is optimized per EM iteration.
+$\frac{\partial Q_\beta}{\partial\beta}=\sum_{i,j}\tau_i^j[\frac{C_i^j}{\beta}-\frac{1-C_i^j}{1-\beta}]+(1-\tau_i^j)[-\frac{C_i^j}{1-\beta}+\frac{(1-C_i^j)\gamma_{g(j)}}{1-(1-\beta)\gamma_{g(j)}}]+s_\beta[\frac{\beta_0}{\beta}-\frac{1-\beta_0}{1-\beta}]$.
 
-In real experiments, the unregularized optimum often reached $\beta\approx0$ or
-$\beta\approx1$. The reported estimator therefore uses a source-derived prior
-$\beta\sim\operatorname{Beta}(1+s_\beta\beta_0,1+s_\beta(1-\beta_0))$, where
-$\beta_0$ is source pseudo-label accuracy and $s_\beta=120$. The scalar M-step
-maximizes the regularized objective
-$Q_{MAP}(\beta)=Q(\beta)+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
-This keeps $\beta$ away from unsupported boundary solutions while using no target
-gold labels.
+There is no algebraic maximizer because $\beta$ appears inside both
+$\log(1-\beta)$ and $\log(1-(1-\beta)\gamma_g)$. The implementation minimizes
+$-Q_\beta(\beta)$ on $[10^{-6},1-10^{-6}]$ using bounded Brent optimization. This
+is a deterministic one-dimensional search and does not require learning rates or
+high-dimensional gradient descent.
+
+#### Step 8: convergence
+
+After each E/M cycle, compute
+$\Delta=\max(\max_j|\alpha_j^{new}-\alpha_j^{old}|,|\beta^{new}-\beta^{old}|)$.
+Stop when $\Delta<10^{-8}$ or after 200 iterations. Probability clipping prevents
+undefined logarithms at 0 and 1. Tests verify that the regularized log posterior is
+non-decreasing across iterations.
+
+#### Step 9: complete target algorithm
+
+1. Apply the graded execution-equivalence kernel to all target model outputs.
+2. Run the old prior/provenance/verifier scorer and select its highest-scoring
+   result class as $\hat y_i$.
+3. Construct $C_i^j=\mathbf{1}(r_i^j=\hat y_i)$.
+4. Load source-derived $\pi_j$, $s_j$, $\beta_0$, $s_\beta$, and $\gamma_g$.
+5. Initialize $\alpha_j=\pi_j$ and $\beta=\beta_0$.
+6. Compute $\tau_i^j$ with the corrected E-step.
+7. Update every $\alpha_j$ with its closed-form anchored formula.
+8. Update $\beta$ by bounded maximization of $Q_\beta$.
+9. Repeat steps 6–8 until convergence.
+10. Return $\alpha_j$ as estimated target model accuracies and rank models by
+    decreasing $\alpha_j$.
 
 Binary target observations alone cannot reliably identify $\beta$ and every
 $\gamma_j$, because both parameters control agreement with a wrong pseudo-label.
