@@ -363,10 +363,14 @@ The paired RQ1--RQ8 comparison and full interpretation are in
 The evaluation on saved real Spider, BIRD, SQLFlow, and BIRD-MiniDev model-zoo
 artifacts is reported in
 [`experiments/NEW_FORMULATION_REAL_RESULTS.md`](experiments/NEW_FORMULATION_REAL_RESULTS.md).
+The collision-aware case-3 extension and its leave-one-dataset-out real evaluation
+are reported in
+[`experiments/COLLISION_FORMULATION_REAL_RESULTS.md`](experiments/COLLISION_FORMULATION_REAL_RESULTS.md).
 
 ```bash
 python experiments/run_new_formulation_comparison.py --seeds 8
 python -m zoo.new_formulation_real --bootstrap 500
+python -m zoo.collision_formulation_real --bootstrap 500
 ```
 
 ## License
