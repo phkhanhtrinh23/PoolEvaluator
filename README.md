@@ -354,6 +354,10 @@ python tests/test_smoke.py && python tests/test_active.py     # or: pytest -q
 
 ## Experimental closed-form formulation
 
+The full beginner-friendly derivation of the collision-aware E-step, auxiliary
+objective (Q), and numerical beta M-step is in
+[`docs/collision_em_beta_derivation.md`](docs/collision_em_beta_derivation.md).
+
 The alternative pseudo-label agreement EM in `new_formulation/` is implemented
 alongside the original estimator in [`pooleval/new_formulation.py`](pooleval/new_formulation.py).
 It uses old PoolEval's kernel/prior/provenance/verifier score to fix a pseudo-label,
