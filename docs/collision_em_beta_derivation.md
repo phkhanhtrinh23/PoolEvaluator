@@ -1,327 +1,272 @@
 # Collision-aware EM: detailed derivation
 
-This document derives the collision-aware estimator implemented by
-`collision_agreement_em` in `pooleval/new_formulation.py`. It begins from the
-probability model and assumes no prior knowledge of expectation-maximization (EM).
+This document derives the collision-aware estimator in
+pooleval/new_formulation.py. It assumes no previous knowledge of
+expectation-maximization (EM).
 
 ## 1. Goal and notation
 
-For every target question (i), the old scoring method uses prior accuracy,
-provenance, and the graded kernel verifier to select one executed result table as
-the fixed pseudo-label (hat y_i). We observe whether each model agrees with this
-pseudo-label, but target gold is withheld while fitting.
+For target question $i$, the old method chooses one executed table as the fixed
+pseudo-label $\hat y_i$. Target gold is withheld while fitting.
 
-- (i=1,ldots,N) indexes questions and (j=1,ldots,J) indexes models.
-- (r_i^j) is model (j)'s executed result and (y_i) is the hidden gold result.
-- (C_i^j=1) if (r_i^j=hat y_i), otherwise (C_i^j=0). This is observed.
-- (Z_i^j=1) if (r_i^j=y_i), otherwise (Z_i^j=0). This is hidden.
-- (alpha_j=P(Z_i^j=1)) is model (j)'s target accuracy.
-- (eta=P(hat y_i=y_i)) is target pseudo-label accuracy.
-- (g(j)) is model (j)'s provenance group.
-- (gamma_{g(j)}) is the probability that a wrong model and a wrong
-  pseudo-label produce the same wrong table.
+- $i=1,\ldots,N$ indexes questions and $j=1,\ldots,J$ indexes models.
+- $r_i^j$ is model $j$'s result; $y_i$ is the hidden gold result.
+- $C_i^j=1$ if $r_i^j=\hat y_i$; otherwise $C_i^j=0$. We observe $C$.
+- $Z_i^j=1$ if $r_i^j=y_i$; otherwise $Z_i^j=0$. We do not observe $Z$.
+- $\alpha_j=P(Z_i^j=1)$ is model $j$'s target accuracy.
+- $\beta=P(\hat y_i=y_i)$ is pseudo-label accuracy.
+- $g(j)$ is model $j$'s provenance group.
+- $\gamma_{g(j)}$ is the probability that a wrong model and wrong pseudo-label
+  produce the same wrong table.
 
-The parameters learned on the target set are (alpha_1,ldots,alpha_J) and
-(eta). Each (gamma_g) is estimated on labeled source data and then frozen.
+We learn $\alpha_1,\ldots,\alpha_J$ and $\beta$. We estimate $\gamma_g$ from
+labeled source data and hold it fixed on target data.
 
-## 2. Why case 3 needs (gamma_g)
+## 2. The four correctness cases
 
 | Model correct | Pseudo-label correct | Agreement |
 | ---: | ---: | --- |
-| 1 | 1 | (C=1): both equal gold |
-| 1 | 0 | (C=0): only the model equals gold |
-| 0 | 1 | (C=0): only the pseudo-label equals gold |
-| 0 | 0 | Either value: two wrong tables may match or differ |
+| 1 | 1 | $C=1$: both equal gold |
+| 1 | 0 | $C=0$: only the model equals gold |
+| 0 | 1 | $C=0$: only the pseudo-label equals gold |
+| 0 | 0 | $C$ can be 0 or 1 because wrong tables may differ or collide |
 
-The last row is case 3. In a two-class task, two wrong answers must match. SQL
-result tables are multiclass objects, so that implication is false. The collision
-probability (gamma_g) describes this final row.
+The last row is case 3. In binary classification, two wrong answers must match.
+SQL tables are multiclass objects, so we need the collision probability
+$\gamma_g$.
 
 ## 3. Observation likelihood
 
-If the model is correct, it agrees exactly when the pseudo-label is correct:
+When the model is correct, agreement occurs exactly when the pseudo-label is
+correct:
 
-(P(C_i^j=1mid Z_i^j=1)=eta),
+$P(C_i^j=1\mid Z_i^j=1)=\beta$.
 
-(P(C_i^j=0mid Z_i^j=1)=1-eta).
+$P(C_i^j=0\mid Z_i^j=1)=1-\beta$.
 
-If the model is wrong, agreement requires the pseudo-label to be wrong and the two
-wrong tables to collide:
+When the model is wrong, agreement requires a wrong pseudo-label and a collision:
 
-(P(C_i^j=1mid Z_i^j=0)=(1-eta)gamma_{g(j)}),
+$P(C_i^j=1\mid Z_i^j=0)=(1-\beta)\gamma_{g(j)}$.
 
-(P(C_i^j=0mid Z_i^j=0)=1-(1-eta)gamma_{g(j)}).
+$P(C_i^j=0\mid Z_i^j=0)=1-(1-\beta)\gamma_{g(j)}$.
 
-Write (gamma_j=gamma_{g(j)}) and
-(d_j(eta)=1-(1-eta)gamma_j=1-gamma_j+etagamma_j). Because (C) is
-binary, the likelihoods can be combined as
+Define $\gamma_j=\gamma_{g(j)}$ and
+$d_j(\beta)=1-(1-\beta)\gamma_j=1-\gamma_j+\beta\gamma_j$. Then:
 
-(P(C_i^jmid Z_i^j=1)=eta^{C_i^j}(1-eta)^{1-C_i^j}),
+$P(C_i^j\mid Z_i^j=1)=\beta^{C_i^j}(1-\beta)^{1-C_i^j}$.
 
-(P(C_i^jmid Z_i^j=0)=[(1-eta)gamma_j]^{C_i^j}[d_j(eta)]^{1-C_i^j}).
+$P(C_i^j\mid Z_i^j=0)=[(1-\beta)\gamma_j]^{C_i^j}[d_j(\beta)]^{1-C_i^j}$.
 
-The latent correctness prior is
+Also, $P(Z_i^j=1\mid\alpha_j)=\alpha_j$ and
+$P(Z_i^j=0\mid\alpha_j)=1-\alpha_j$.
 
-(P(Z_i^j=1midalpha_j)=alpha_j), and
-(P(Z_i^j=0midalpha_j)=1-alpha_j).
+## 4. Source-data priors
 
-## 4. Source-data anchors
+Let $\pi_j$ be source accuracy and $s_j$ its effective sample size:
 
-Target binary agreements alone have a mirror ambiguity, so labeled source
-information remains in the objective rather than serving only as initialization.
-Let (pi_j) be source accuracy and (s_j) its effective sample size:
+$\alpha_j\sim\mathrm{Beta}(1+s_j\pi_j,\ 1+s_j(1-\pi_j))$.
 
-(alpha_jsimmathrm{Beta}(1+s_jpi_j, 1+s_j(1-pi_j))).
+Its parameter-dependent log density is:
 
-Ignoring constants, its log density is
+$\log p(\alpha_j)=s_j\pi_j\log\alpha_j+s_j(1-\pi_j)\log(1-\alpha_j)$.
 
-(s_j[pi_jlogalpha_j+(1-pi_j)log(1-alpha_j)]).
+Let $\beta_0$ be source pseudo-label accuracy and $s_\beta$ its strength:
 
-Likewise, source pseudo-label accuracy (eta_0) and strength (s_eta) give
+$\beta\sim\mathrm{Beta}(1+s_\beta\beta_0,\ 1+s_\beta(1-\beta_0))$.
 
-(etasimmathrm{Beta}(1+s_etaeta_0, 1+s_eta(1-eta_0))),
+Its parameter-dependent log density is:
 
-with log-density contribution
+$\log p(\beta)=s_\beta\beta_0\log\beta+s_\beta(1-\beta_0)\log(1-\beta)$.
 
-(s_eta[eta_0logeta+(1-eta_0)log(1-eta)]).
-
-The added 1 disappears because a Beta density uses exponents (a-1) and (b-1).
-These priors make the estimate maximum-a-posteriori, abbreviated MAP.
+The added 1 disappears because a Beta density uses powers $a-1$ and $b-1$.
+These priors make the result a maximum-a-posteriori estimate.
 
 ## 5. Complete-data log posterior
 
-Suppose temporarily that every hidden (Z_i^j) were known. One cell contributes
+Pretend temporarily that every hidden $Z_i^j$ is known. One cell contributes:
 
-(Z_i^j[logalpha_j+C_i^jlogeta+(1-C_i^j)log(1-eta)])
+$\ell_{ij}=Z_i^j[\log\alpha_j+C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+(1-Z_i^j)[\log(1-\alpha_j)+C_i^j\log((1-\beta)\gamma_j)+(1-C_i^j)\log d_j(\beta)]$.
 
-(+(1-Z_i^j)[log(1-alpha_j)+C_i^jlog((1-eta)gamma_j)+(1-C_i^j)log d_j(eta)]).
+After summing all cells and adding the priors:
 
-After summing all cells and adding source priors, the complete-data log posterior,
-up to constants independent of the learned parameters, is
+$\ell_c=\sum_{i,j}Z_i^j[\log\alpha_j+C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+\sum_{i,j}(1-Z_i^j)[\log(1-\alpha_j)+C_i^j\log((1-\beta)\gamma_j)+(1-C_i^j)\log d_j(\beta)]+\sum_j s_j[\pi_j\log\alpha_j+(1-\pi_j)\log(1-\alpha_j)]+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
 
-(ell_c=sum_{i,j}Z_i^j[logalpha_j+C_i^jlogeta+(1-C_i^j)log(1-eta)])
+Direct maximization is impossible because $Z$ is hidden. EM alternates an
+expectation step and a maximization step.
 
-(+sum_{i,j}(1-Z_i^j)[log(1-alpha_j)+C_i^jlog((1-eta)gamma_j)+(1-C_i^j)log d_j(eta)])
+## 6. E-step derivation
 
-(+sum_j s_j[pi_jlogalpha_j+(1-pi_j)log(1-alpha_j)])
+At iteration $t$, define:
 
-(+s_eta[eta_0logeta+(1-eta_0)log(1-eta)]).
+$\tau_i^j=P(Z_i^j=1\mid C_i^j,\alpha_j^{(t)},\beta^{(t)},\gamma_j)$.
 
-Direct maximization is impossible because (Z) is hidden. EM handles this by
-alternating an expectation step and a maximization step.
+Bayes' rule gives:
 
-## 6. E-step proof
+$\tau_i^j=\frac{P(Z_i^j=1)P(C_i^j\mid Z_i^j=1)}{P(Z_i^j=1)P(C_i^j\mid Z_i^j=1)+P(Z_i^j=0)P(C_i^j\mid Z_i^j=0)}$.
 
-At iteration (t), define the posterior probability
+For $C_i^j=1$:
 
-(	au_i^j=P(Z_i^j=1mid C_i^j,alpha_j^{(t)},eta^{(t)},gamma_j)).
+$\tau_i^j=\frac{\alpha_j\beta}{\alpha_j\beta+(1-\alpha_j)(1-\beta)\gamma_j}$.
 
-Bayes' rule gives
+For $C_i^j=0$:
 
-(	au_i^j=rac{P(Z_i^j=1)P(C_i^jmid Z_i^j=1)}{P(Z_i^j=1)P(C_i^jmid Z_i^j=1)+P(Z_i^j=0)P(C_i^jmid Z_i^j=0)}).
+$\tau_i^j=\frac{\alpha_j(1-\beta)}{\alpha_j(1-\beta)+(1-\alpha_j)d_j(\beta)}$.
 
-For an agreement, (C_i^j=1), substitution produces
+This is the closed-form E-step. Each $\tau_i^j$ is a soft probability that a
+model answer is correct.
 
-(	au_i^j=rac{alpha_jeta}{alpha_jeta+(1-alpha_j)(1-eta)gamma_j}).
+## 7. Deriving Q
 
-For a disagreement, (C_i^j=0), it produces
+The E-step gives $E[Z_i^j\mid C]=\tau_i^j$. Taking the expectation of
+$\ell_c$ replaces $Z_i^j$ by $\tau_i^j$:
 
-(	au_i^j=rac{alpha_j(1-eta)}{alpha_j(1-eta)+(1-alpha_j)d_j(eta)}).
+$Q(\alpha,\beta)=\sum_{i,j}\tau_i^j[\log\alpha_j+C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+\sum_{i,j}(1-\tau_i^j)[\log(1-\alpha_j)+C_i^j\log((1-\beta)\gamma_j)+(1-C_i^j)\log d_j(\beta)]+\sum_j s_j[\pi_j\log\alpha_j+(1-\pi_j)\log(1-\alpha_j)]+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
 
-Thus the E-step is closed form. It assigns soft correctness probabilities rather
-than forcing every model answer to be correct or wrong.
+During the M-step, $\tau$ is fixed. We do not differentiate through $\tau$.
+The alpha and beta terms separate, so we maximize them independently.
 
-## 7. Deriving the auxiliary objective (Q)
+## 8. Alpha M-step: closed-form proof
 
-The E-step implies (E[Z_i^jmid C]=	au_i^j) and
-(E[1-Z_i^jmid C]=1-	au_i^j). Taking the expectation of (ell_c) simply
-replaces (Z_i^j) by (	au_i^j):
+Keep the terms involving $\alpha_j$:
 
-(Q(alpha,eta)=sum_{i,j}	au_i^j[logalpha_j+C_i^jlogeta+(1-C_i^j)log(1-eta)])
+$Q_{\alpha_j}=\sum_i[\tau_i^j\log\alpha_j+(1-\tau_i^j)\log(1-\alpha_j)]+s_j[\pi_j\log\alpha_j+(1-\pi_j)\log(1-\alpha_j)]$.
 
-(+sum_{i,j}(1-	au_i^j)[log(1-alpha_j)+C_i^jlog((1-eta)gamma_j)+(1-C_i^j)log d_j(eta)])
+Differentiate:
 
-(+sum_j s_j[pi_jlogalpha_j+(1-pi_j)log(1-alpha_j)])
+$\frac{\partial Q_{\alpha_j}}{\partial\alpha_j}=\frac{\sum_i\tau_i^j+s_j\pi_j}{\alpha_j}-\frac{N-\sum_i\tau_i^j+s_j(1-\pi_j)}{1-\alpha_j}$.
 
-(+s_eta[eta_0logeta+(1-eta_0)log(1-eta)]).
+Set the derivative equal to zero:
 
-In the M-step, (	au) is fixed at its E-step value. We must not differentiate
-through (	au). The (alpha) and (eta) terms separate, so we maximize them
-independently.
+$\frac{\sum_i\tau_i^j+s_j\pi_j}{\alpha_j}=\frac{N-\sum_i\tau_i^j+s_j(1-\pi_j)}{1-\alpha_j}$.
 
-## 8. Closed-form M-step for (alpha_j)
+Cross-multiply and collect $\alpha_j$:
 
-The terms containing one (alpha_j) are
+$(\sum_i\tau_i^j+s_j\pi_j)(1-\alpha_j)=[N-\sum_i\tau_i^j+s_j(1-\pi_j)]\alpha_j$.
 
-(Q_{alpha_j}=sum_i[	au_i^jlogalpha_j+(1-	au_i^j)log(1-alpha_j)]+s_j[pi_jlogalpha_j+(1-pi_j)log(1-alpha_j)]).
+$\sum_i\tau_i^j+s_j\pi_j=(N+s_j)\alpha_j$.
 
-Its derivative is
+Therefore:
 
-(rac{partial Q_{alpha_j}}{partialalpha_j}=rac{sum_i	au_i^j+s_jpi_j}{alpha_j}-rac{N-sum_i	au_i^j+s_j(1-pi_j)}{1-alpha_j}).
+$\alpha_j^{(t+1)}=\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$.
 
-Set it to zero and multiply by (alpha_j(1-alpha_j)):
+The second derivative is:
 
-((sum_i	au_i^j+s_jpi_j)(1-alpha_j)=[N-sum_i	au_i^j+s_j(1-pi_j)]alpha_j).
+$\frac{\partial^2Q_{\alpha_j}}{\partial\alpha_j^2}=-\frac{\sum_i\tau_i^j+s_j\pi_j}{\alpha_j^2}-\frac{N-\sum_i\tau_i^j+s_j(1-\pi_j)}{(1-\alpha_j)^2}\le0$.
 
-Expanding and collecting terms yields
+Thus this stationary point is a maximum.
 
-(sum_i	au_i^j+s_jpi_j=(N+s_j)alpha_j),
+## 9. Beta M-step
 
-so the exact update is
+Keep only the beta terms:
 
-(alpha_j^{(t+1)}=rac{sum_i	au_i^j+s_jpi_j}{N+s_j}).
-
-Its second derivative is
-
-(rac{partial^2Q_{alpha_j}}{partialalpha_j^2}=-rac{sum_i	au_i^j+s_jpi_j}{alpha_j^2}-rac{N-sum_i	au_i^j+s_j(1-pi_j)}{(1-alpha_j)^2}le0),
-
-so this stationary point is a maximum. When (s_j=0), the update reduces to the
-mean posterior correctness (N^{-1}sum_i	au_i^j).
-
-## 9. M-step for (eta)
-
-The exact part of (Q) that depends on (eta) is
-
-(Q_eta(eta)=sum_{i,j}	au_i^j[C_i^jlogeta+(1-C_i^j)log(1-eta)])
-
-(+sum_{i,j}(1-	au_i^j)[C_i^jlog((1-eta)gamma_j)+(1-C_i^j)log d_j(eta)])
-
-(+s_eta[eta_0logeta+(1-eta_0)log(1-eta)]).
+$Q_\beta(\beta)=\sum_{i,j}\tau_i^j[C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+\sum_{i,j}(1-\tau_i^j)[C_i^j\log((1-\beta)\gamma_j)+(1-C_i^j)\log d_j(\beta)]+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
 
 ### 9.1 First derivative
 
-The needed elementary derivatives are
+We use:
 
-- (dlogeta/deta=1/eta);
-- (dlog(1-eta)/deta=-1/(1-eta));
-- (dlog((1-eta)gamma_j)/deta=-1/(1-eta));
-- (dlog d_j(eta)/deta=gamma_j/d_j(eta)).
+- $\frac{d}{d\beta}\log\beta=\frac{1}{\beta}$.
+- $\frac{d}{d\beta}\log(1-\beta)=-\frac{1}{1-\beta}$.
+- $\frac{d}{d\beta}\log((1-\beta)\gamma_j)=-\frac{1}{1-\beta}$.
+- $\frac{d}{d\beta}\log d_j(\beta)=\frac{\gamma_j}{d_j(\beta)}$.
 
-Therefore
+Therefore:
 
-(rac{dQ_eta}{deta}=sum_{i,j}	au_i^j[rac{C_i^j}{eta}-rac{1-C_i^j}{1-eta}])
+$\frac{dQ_\beta}{d\beta}=\sum_{i,j}\tau_i^j[\frac{C_i^j}{\beta}-\frac{1-C_i^j}{1-\beta}]+\sum_{i,j}(1-\tau_i^j)[-\frac{C_i^j}{1-\beta}+\frac{(1-C_i^j)\gamma_j}{d_j(\beta)}]+s_\beta[\frac{\beta_0}{\beta}-\frac{1-\beta_0}{1-\beta}]$.
 
-(+sum_{i,j}(1-	au_i^j)[-rac{C_i^j}{1-eta}+rac{(1-C_i^j)gamma_j}{d_j(eta)}])
+The maximum satisfies $dQ_\beta/d\beta=0$ inside $0<\beta<1$.
 
-(+s_eta[rac{eta_0}{eta}-rac{1-eta_0}{1-eta}]).
+### 9.2 Why beta has no general closed form
 
-The maximizing (eta) is the root of this score equation within (0<eta<1).
+Without collision correction, every denominator is $\beta$ or $1-\beta$.
+Multiplying by $\beta(1-\beta)$ creates a linear equation and a ratio-of-counts
+update.
 
-### 9.2 Why there is no general count-ratio closed form
+Collision correction adds:
 
-Without the collision correction, every denominator is either (eta) or
-(1-eta). Multiplying the score equation by (eta(1-eta)) gives a linear
-equation, hence the original ratio-of-expected-counts update.
+$\frac{(1-C_i^j)\gamma_j}{1-\gamma_j+\beta\gamma_j}$.
 
-The corrected derivative additionally contains
+The denominator depends on $\beta$ and the group-specific $\gamma_j$. With
+different values of $\gamma_j$, clearing all denominators creates a higher-degree
+equation, not one linear count equation. Therefore no general count-ratio closed
+form exists.
 
-(rac{(1-C_i^j)gamma_j}{1-gamma_j+etagamma_j}).
-
-Its denominator depends on both (eta) and the group-specific (gamma_j). With
-several different (gamma_j), clearing every denominator creates a higher-degree
-equation, not one linear count equation. Consequently there is no general symbolic
-ratio update. A numerical root or numerical maximization is the correct M-step.
-
-The special case (gamma_j=1) for all models gives (d_j(eta)=eta) and
-recovers the original binary symmetry, but real source-estimated collision rates
-are not all one.
-
-### 9.3 Concavity proof: why numerical optimization is reliable
+### 9.3 Concavity proof
 
 Differentiate again:
 
-(rac{d^2Q_eta}{deta^2}=-sum_{i,j}	au_i^j[rac{C_i^j}{eta^2}+rac{1-C_i^j}{(1-eta)^2}])
+$\frac{d^2Q_\beta}{d\beta^2}=-\sum_{i,j}\tau_i^j[\frac{C_i^j}{\beta^2}+\frac{1-C_i^j}{(1-\beta)^2}]-\sum_{i,j}(1-\tau_i^j)[\frac{C_i^j}{(1-\beta)^2}+\frac{(1-C_i^j)\gamma_j^2}{d_j(\beta)^2}]-s_\beta[\frac{\beta_0}{\beta^2}+\frac{1-\beta_0}{(1-\beta)^2}]$.
 
-(-sum_{i,j}(1-	au_i^j)[rac{C_i^j}{(1-eta)^2}+rac{(1-C_i^j)gamma_j^2}{d_j(eta)^2}])
+Every bracketed value is non-negative for $0<\beta<1$ and
+$0\le\gamma_j\le1$. Hence:
 
-(-s_eta[rac{eta_0}{eta^2}+rac{1-eta_0}{(1-eta)^2}]).
+$\frac{d^2Q_\beta}{d\beta^2}\le0$.
 
-Every bracketed quantity is non-negative for (0<eta<1) and
-(0legamma_jle1). Hence (d^2Q_eta/deta^2le0), so (Q_eta) is
-concave. Except in degenerate cases it is strictly concave and has only one
-maximum. There is no inferior local maximum in which a bounded one-dimensional
-optimizer could become trapped.
+Thus $Q_\beta$ is concave. With the source anchor, it is strictly concave and
+has one maximum. Numerical optimization cannot become trapped at an inferior
+local maximum.
 
-## 10. Exact numerical procedure used by the code
+## 10. Numerical beta update in the code
 
-Logarithms are undefined at probabilities zero and one. The implementation searches
+The code searches on:
 
-(10^{-6}leetale1-10^{-6}).
+$10^{-6}\le\beta\le1-10^{-6}$.
 
-SciPy's bounded scalar routine minimizes, so the code defines
+Because the scalar routine minimizes, the implementation defines:
 
-(f(eta)=-Q_eta(eta))
+$f(\beta)=-Q_\beta(\beta)$.
 
-and uses `minimize_scalar(f, bounds=(eps, 1-eps), method="bounded")`. Since
-(Q_eta) is concave, (-Q_eta) is convex. Minimizing this scalar function is
-equivalent to globally maximizing (Q_eta), to numerical tolerance.
+It minimizes $f$ with SciPy's bounded scalar optimizer. Since $Q_\beta$ is
+concave, $-Q_\beta$ is convex. The minimum of $-Q_\beta$ is the global maximum
+of $Q_\beta$, up to numerical tolerance.
 
-This remains a genuine EM M-step. EM requires maximization of (Q); it does not
-require a symbolic closed-form update.
+This is a valid EM M-step. EM requires maximizing $Q$; it does not require a
+symbolic closed-form update.
 
-## 11. Worked E-step and alpha M-step
+## 11. Worked example
 
-Consider one model and two items with
-(C=[1,0]), (alpha^{(t)}=0.70), (eta^{(t)}=0.80), and (gamma=0.10).
+Suppose $C=[1,0]$, $\alpha^{(t)}=0.70$, $\beta^{(t)}=0.80$, and
+$\gamma=0.10$.
 
-For the agreement cell,
+For the agreement:
 
-(	au_1=rac{0.70(0.80)}{0.70(0.80)+0.30(0.20)(0.10)}=rac{0.56}{0.566}approx0.9894).
+$\tau_1=\frac{0.70(0.80)}{0.70(0.80)+0.30(0.20)(0.10)}=\frac{0.56}{0.566}\approx0.9894$.
 
-For the disagreement cell,
+For the disagreement:
 
-(d(0.80)=1-(1-0.80)(0.10)=0.98),
+$d(0.80)=1-(1-0.80)(0.10)=0.98$.
 
-(	au_2=rac{0.70(0.20)}{0.70(0.20)+0.30(0.98)}=rac{0.14}{0.434}approx0.3226).
+$\tau_2=\frac{0.70(0.20)}{0.70(0.20)+0.30(0.98)}=\frac{0.14}{0.434}\approx0.3226$.
 
-If (pi=0.75) and (s=10), then
+If $\pi=0.75$ and $s=10$, then:
 
-(alpha^{(t+1)}=rac{0.9894+0.3226+10(0.75)}{2+10}approx0.7343).
+$\alpha^{(t+1)}=\frac{0.9894+0.3226+10(0.75)}{2+10}\approx0.7343$.
 
-For the beta update, freeze (	au_1,	au_2), substitute them and the source beta
-prior into (Q_eta), and maximize that one-dimensional concave function. The
-next E-step then uses both newly updated parameters.
+For beta, freeze $\tau_1$ and $\tau_2$, substitute them into $Q_\beta$, and
+maximize the resulting one-dimensional concave function.
 
 ## 12. Complete algorithm
 
-1. Select one fixed pseudo-label per target item using the old scoring method.
-2. Build the binary matrix (C_i^j=1) when model (j)'s executed table equals
-   that pseudo-label.
-3. Load source-derived (pi_j,s_j,eta_0,s_eta,gamma_g).
-4. Initialize (alpha_j^{(0)}=pi_j) and (eta^{(0)}=eta_0).
-5. E-step: compute each (	au_i^j) using Bayes' rule above.
-6. M-step: update every
-   (alpha_j=(sum_i	au_i^j+s_jpi_j)/(N+s_j)).
-7. M-step: maximize (Q_eta) numerically on
-   ([10^{-6},1-10^{-6}]).
-8. Compute
-   (Delta=max(max_j|alpha_j^{(t+1)}-alpha_j^{(t)}|, |eta^{(t+1)}-eta^{(t)}|)).
-9. Stop if (Delta<10^{-8}) or after 200 iterations; otherwise repeat step 5.
-10. Recompute (	au) once at the returned parameters so all outputs describe the
-    same final state.
+1. Select one fixed pseudo-label $\hat y_i$ per target question.
+2. Build $C_i^j=1$ when model $j$ agrees with $\hat y_i$.
+3. Load source-derived $\pi_j,s_j,\beta_0,s_\beta,\gamma_g$.
+4. Initialize $\alpha_j^{(0)}=\pi_j$ and $\beta^{(0)}=\beta_0$.
+5. E-step: calculate every $\tau_i^j$ using Bayes' rule above.
+6. Alpha M-step: set
+   $\alpha_j=(\sum_i\tau_i^j+s_j\pi_j)/(N+s_j)$.
+7. Beta M-step: maximize $Q_\beta$ on $[10^{-6},1-10^{-6}]$.
+8. Calculate
+   $\Delta=\max(\max_j|\alpha_j^{(t+1)}-\alpha_j^{(t)}|,|\beta^{(t+1)}-\beta^{(t)}|)$.
+9. Stop when $\Delta<10^{-8}$ or after 200 iterations; otherwise repeat.
+10. Recalculate $\tau$ using the returned parameters.
 
-## 13. What is observed, fixed, and learned?
+## 13. Summary
 
-| Quantity | Role | Source |
-| --- | --- | --- |
-| (C_i^j) | Observed agreement | Target executions without gold |
-| (pi_j,s_j) | Model accuracy anchor | Labeled source/meta data |
-| (eta_0,s_eta) | Pseudo-label anchor | Labeled source/meta data |
-| (gamma_g) | Fixed wrong-table collision rate | Labeled source/meta data |
-| (	au_i^j) | Soft correctness | Recomputed in every E-step |
-| (alpha_j) | Target model accuracy | Learned in the M-step |
-| (eta) | Target pseudo-label accuracy | Learned by scalar M-step |
-
-Target gold is used only afterward to score the experiment. It is not used to
-construct (C), calculate (	au), or update (alpha) or (eta).
-
-## 14. Summary
-
-- The E-step is closed form because Bayes' rule directly gives (	au_i^j).
-- The (alpha_j) M-step is closed form because its score equation becomes linear.
-- The term (d_j(eta)=1-gamma_j+etagamma_j) removes the original closed-form
-  count ratio for (eta).
-- The beta objective remains a concave one-dimensional function. Bounded numerical
-  maximization is therefore inexpensive and globally well behaved.
-- Numerical maximization is fully valid EM: the requirement is maximizing (Q),
-  not writing every maximizer as a symbolic fraction.
+- The E-step is closed form because Bayes' rule gives $\tau_i^j$ directly.
+- The alpha M-step is closed form because its score equation becomes linear.
+- The term $d_j(\beta)=1-\gamma_j+\beta\gamma_j$ removes beta's original
+  ratio-of-counts closed form.
+- The beta objective is still a concave one-dimensional function, so bounded
+  numerical maximization is globally well behaved.
+- Numerical maximization is valid EM because the requirement is to maximize
+  $Q$, not to express every maximizer as a symbolic fraction.
