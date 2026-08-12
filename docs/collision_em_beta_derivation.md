@@ -115,15 +115,112 @@ $\tau_i^j=\frac{\alpha_j(1-\beta)}{\alpha_j(1-\beta)+(1-\alpha_j)d_j(\beta)}$.
 This is the closed-form E-step. Each $\tau_i^j$ is a soft probability that a
 model answer is correct.
 
-## 7. Deriving Q
+## 7. What is Q, and why does EM need it?
 
-The E-step gives $E[Z_i^j\mid C]=\tau_i^j$. Taking the expectation of
-$\ell_c$ replaces $Z_i^j$ by $\tau_i^j$:
+### 7.1 The function we really want to maximize
+
+Write all unknown parameters as $\theta=(\alpha_1,\ldots,\alpha_J,\beta)$.
+Ideally, we would maximize the observed-data log posterior:
+
+$L(\theta)=\log P(C\mid\theta)+\log p(\theta)$.
+
+The problem is that $P(C\mid\theta)$ must sum over every possible value of the
+hidden matrix $Z$:
+
+$P(C\mid\theta)=\sum_Z P(C,Z\mid\theta)$.
+
+Therefore:
+
+$L(\theta)=\log\sum_Z P(C,Z\mid\theta)+\log p(\theta)$.
+
+The logarithm is outside the sum. This makes direct differentiation difficult:
+every possible hidden explanation $Z$ is mixed inside one logarithm.
+
+### 7.2 EM creates a temporary distribution over Z
+
+At iteration $t$, the E-step calculates the posterior distribution of the hidden
+variables using the current parameters $\theta^{(t)}$:
+
+$q_t(Z)=P(Z\mid C,\theta^{(t)})$.
+
+For one cell, this distribution is summarized by:
+
+$q_t(Z_i^j=1)=\tau_i^j$.
+
+$q_t(Z_i^j=0)=1-\tau_i^j$.
+
+The letter $q$ here means a temporary probability distribution over possible
+hidden correctness values. It is not the same thing as the auxiliary function
+$Q$.
+
+### 7.3 The lower-bound reason Q exists
+
+Insert $q_t(Z)/q_t(Z)=1$ inside the observed likelihood:
+
+$\log P(C\mid\theta)=\log\sum_Z q_t(Z)\frac{P(C,Z\mid\theta)}{q_t(Z)}$.
+
+Because the logarithm is concave, Jensen's inequality gives:
+
+$\log P(C\mid\theta)\ge\sum_Z q_t(Z)\log\frac{P(C,Z\mid\theta)}{q_t(Z)}$.
+
+After adding the log prior, the lower bound is:
+
+$L(\theta)\ge\sum_Z q_t(Z)\log P(C,Z\mid\theta)+\log p(\theta)-\sum_Z q_t(Z)\log q_t(Z)$.
+
+Define the first two parameter-dependent terms as:
+
+$Q(\theta\mid\theta^{(t)})=E_{Z\sim q_t}[\log P(C,Z\mid\theta)]+\log p(\theta)$.
+
+Define the remaining term as the entropy:
+
+$H(q_t)=-\sum_Z q_t(Z)\log q_t(Z)$.
+
+Then:
+
+$L(\theta)\ge Q(\theta\mid\theta^{(t)})+H(q_t)$.
+
+During the M-step, $q_t$ and therefore $H(q_t)$ are fixed. Maximizing the lower
+bound with respect to $\theta$ is consequently the same as maximizing $Q$.
+The E-step chooses the exact posterior $q_t$, which makes the bound touch the
+true objective at the current parameters. The M-step raises this touching lower
+bound. This is why ordinary EM does not decrease the observed-data objective.
+
+In plain language, $Q$ asks:
+
+> If the current soft beliefs about which model answers are correct were true,
+> which new values of alpha and beta would make those explanations most likely?
+
+### 7.4 Why Q has this particular formula
+
+The complete-data log posterior $\ell_c$ in section 5 contains $Z_i^j$ whenever
+the cell is explained as a correct-model case and $1-Z_i^j$ whenever it is
+explained as a wrong-model case. The E-step gives:
+
+$E[Z_i^j\mid C,\theta^{(t)}]=\tau_i^j$.
+
+$E[1-Z_i^j\mid C,\theta^{(t)}]=1-\tau_i^j$.
+
+Taking the expectation of $\ell_c$ therefore replaces each $Z_i^j$ by
+$\tau_i^j$ and each $1-Z_i^j$ by $1-\tau_i^j$:
 
 $Q(\alpha,\beta)=\sum_{i,j}\tau_i^j[\log\alpha_j+C_i^j\log\beta+(1-C_i^j)\log(1-\beta)]+\sum_{i,j}(1-\tau_i^j)[\log(1-\alpha_j)+C_i^j\log((1-\beta)\gamma_j)+(1-C_i^j)\log d_j(\beta)]+\sum_j s_j[\pi_j\log\alpha_j+(1-\pi_j)\log(1-\alpha_j)]+s_\beta[\beta_0\log\beta+(1-\beta_0)\log(1-\beta)]$.
 
-During the M-step, $\tau$ is fixed. We do not differentiate through $\tau$.
-The alpha and beta terms separate, so we maximize them independently.
+Every part has a direct source:
+
+| Part of $Q$ | Why it appears |
+| --- | --- |
+| $\tau_i^j\log\alpha_j$ | Soft weight for the prior probability that model $j$ is correct |
+| $(1-\tau_i^j)\log(1-\alpha_j)$ | Soft weight for the probability that model $j$ is wrong |
+| $\tau_i^j C_i^j\log\beta$ | Correct model agrees, so the pseudo-label must be correct |
+| $\tau_i^j(1-C_i^j)\log(1-\beta)$ | Correct model disagrees, so the pseudo-label must be wrong |
+| $(1-\tau_i^j)C_i^j\log((1-\beta)\gamma_j)$ | Wrong model agrees only through a wrong pseudo-label and collision |
+| $(1-\tau_i^j)(1-C_i^j)\log d_j(\beta)$ | Wrong model does not collide with the pseudo-label |
+| Terms multiplied by $s_j$ | Source-data prior for each $\alpha_j$ |
+| Terms multiplied by $s_\beta$ | Source-data prior for $\beta$ |
+
+During the M-step, $\tau$ is fixed at its E-step value. We do not differentiate
+through $\tau$. The alpha and beta terms separate, so we maximize them
+independently.
 
 ## 8. Alpha M-step: closed-form proof
 
