@@ -355,7 +355,7 @@ python tests/test_smoke.py && python tests/test_active.py     # or: pytest -q
 ## Experimental closed-form formulation
 
 The full beginner-friendly derivation of the collision-aware E-step, auxiliary
-objective (Q), and numerical beta M-step is in
+objective $Q$, and numerical beta M-step is in
 [`docs/collision_em_beta_derivation.md`](docs/collision_em_beta_derivation.md).
 
 The alternative pseudo-label agreement EM in `new_formulation/` is implemented
