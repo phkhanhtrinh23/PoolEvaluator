@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -57,8 +58,10 @@ def chat(provider, model, messages, temperature=0.0, max_tokens=512, retries=4):
     for attempt in range(retries):
         try:
             content = _raw_call(provider, model, messages, temperature, max_tokens)
-            with open(cpath, "w") as f:
+            tmp = f"{cpath}.{os.getpid()}.{threading.get_ident()}.tmp"
+            with open(tmp, "w") as f:                 # atomic: safe under threads
                 json.dump({"model": model, "content": content}, f)
+            os.replace(tmp, cpath)
             return content
         except urllib.error.HTTPError as e:
             last = e
