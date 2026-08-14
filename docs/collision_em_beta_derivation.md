@@ -273,22 +273,83 @@ $\frac{dQ_\beta}{d\beta}=\sum_{i,j}\tau_i^j[\frac{C_i^j}{\beta}-\frac{1-C_i^j}{1
 
 The maximum satisfies $dQ_\beta/d\beta=0$ inside $0<\beta<1$.
 
-### 9.2 Why beta has no general closed form
+### 9.2 Substitute the known gamma values
 
-Without collision correction, every denominator is $\beta$ or $1-\beta$.
-Multiplying by $\beta(1-\beta)$ creates a linear equation and a ratio-of-counts
-update.
+The experiment knows every $\gamma_g$ before target EM begins. To make the
+resulting beta equation explicit, define three sets of known expected counts from
+the current E-step:
 
-Collision correction adds:
+$A=\sum_{i,j}\tau_i^jC_i^j+s_\beta\beta_0$.
 
-$\frac{(1-C_i^j)\gamma_j}{1-\gamma_j+\beta\gamma_j}$.
+$B=\sum_{i,j}[\tau_i^j(1-C_i^j)+(1-\tau_i^j)C_i^j]+s_\beta(1-\beta_0)$.
 
-The denominator depends on $\beta$ and the group-specific $\gamma_j$. With
-different values of $\gamma_j$, clearing all denominators creates a higher-degree
-equation, not one linear count equation. Therefore no general count-ratio closed
-form exists.
+$D_g=\sum_{i,j:g(j)=g}(1-\tau_i^j)(1-C_i^j)$.
 
-### 9.3 Concavity proof
+Here, $A$ collects terms whose derivative contributes $1/\beta$, $B$ collects
+terms whose derivative contributes $-1/(1-\beta)$, and $D_g$ collects
+wrong-model disagreements for group $g$. During this M-step, $\tau$, $C$,
+$s_\beta$, $\beta_0$, and every $\gamma_g$ are known constants.
+
+Using these definitions, the full score equation becomes:
+
+$\frac{dQ_\beta}{d\beta}=\frac{A}{\beta}-\frac{B}{1-\beta}+\sum_g\frac{D_g\gamma_g}{1-\gamma_g+\beta\gamma_g}=0$.
+
+This equation is the exact solution condition for beta after the known gamma
+values have been substituted.
+
+### 9.3 General polynomial whose unique root is beta
+
+Define $d_g(\beta)=1-\gamma_g+\beta\gamma_g$. Multiply the score equation by
+$\beta(1-\beta)\prod_gd_g(\beta)$. The denominators disappear and give:
+
+$P(\beta)=A(1-\beta)\prod_gd_g(\beta)-B\beta\prod_gd_g(\beta)+\beta(1-\beta)\sum_g[D_g\gamma_g\prod_{h\ne g}d_h(\beta)]=0$.
+
+All coefficients of $P$ are known during the M-step. Therefore the beta update
+can be stated exactly as:
+
+$\beta^{(t+1)}=\text{the unique root of }P(\beta)=0\text{ in }(0,1)$.
+
+If there are $G$ distinct gamma values, $P$ generally has degree $G+1$.
+Knowing the coefficients makes its root numerically computable, but it does not
+create a universal symbolic formula for arbitrary $G$. In particular, general
+polynomials of degree five or higher do not have a formula using only arithmetic
+and radicals. This is why knowing gamma does not by itself restore the original
+count-ratio update.
+
+### 9.4 Closed form when all groups share one gamma
+
+If every model uses one common known collision probability $\gamma$, define
+$D=\sum_gD_g$. The score equation is:
+
+$\frac{A}{\beta}-\frac{B}{1-\beta}+\frac{D\gamma}{1-\gamma+\beta\gamma}=0$.
+
+After multiplying by $\beta(1-\beta)(1-\gamma+\beta\gamma)$, we obtain:
+
+$c_2\beta^2+c_1\beta+c_0=0$.
+
+The known coefficients are:
+
+$c_2=-\gamma(A+B+D)$.
+
+$c_1=A(2\gamma-1)-B(1-\gamma)+D\gamma$.
+
+$c_0=A(1-\gamma)$.
+
+For $\gamma>0$, the two algebraic candidates are:
+
+$\beta_\pm=\frac{-c_1\pm\sqrt{c_1^2-4c_2c_0}}{2c_2}$.
+
+The concavity proof below guarantees that exactly one valid maximizing candidate
+lies in $(0,1)$; that candidate is $\beta^{(t+1)}$. If $\gamma=0$, the collision
+term vanishes and the solution simplifies to:
+
+$\beta^{(t+1)}=\frac{A}{A+B}$.
+
+Thus a genuine quadratic closed form exists for one shared gamma. The implemented
+experiment uses provenance-specific $\gamma_g$, so it solves the general unique
+root rather than incorrectly replacing all group collision rates by one number.
+
+### 9.5 Concavity proof
 
 Differentiate again:
 
