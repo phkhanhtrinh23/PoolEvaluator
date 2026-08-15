@@ -373,6 +373,8 @@ are reported in
 The replay of saved real `gpt-5-mini` pseudo-label corrections after case-3 EM is
 reported in
 [`experiments/COLLISION_ACTIVE_REAL_RESULTS.md`](experiments/COLLISION_ACTIVE_REAL_RESULTS.md).
+The complete rerun is reported in
+[`experiments/COLLISION_RERUN_2026_08_14.md`](experiments/COLLISION_RERUN_2026_08_14.md).
 
 ```bash
 python experiments/run_new_formulation_comparison.py --seeds 8
