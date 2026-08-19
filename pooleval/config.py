@@ -32,7 +32,19 @@ class Config:
     prior_bias: float = 0.06       # shift-induced bias of the seen prior (signed per model)
     prior_noise: float = 0.07      # seen-prior noise std
     verifier_acc: float = 0.72     # P(verifier points at the true class) -- independent channel
-    verifier_strength: float = 2.0 # log-bonus the verifier adds to its guessed class
+    verifier_strength: float = 2.0 # bonus the verifier adds to its guessed class
+    verifier_mode: str = "fixed"   # fixed | learned
+    # "fixed"   -- add the constant `verifier_strength` to the verifier's class. The
+    #              bonus lives on the ACCURACY scale while every other term is a
+    #              reliability in (0,1), so it is worth several whole models and its
+    #              effective weight drifts with pool size. Kept as the default so
+    #              published Text2SQL numbers reproduce.
+    # "learned" -- treat the verifier as one extra voter in its own provenance group
+    #              and let EM estimate its reliability like any pool member. Removes
+    #              the hyper-parameter entirely and automatically silences a verifier
+    #              that turns out to be unreliable on the target workload. Added after
+    #              the vision/graph ports showed a broken verifier (8% accurate on
+    #              MNIST->USPS) dominating the consensus at the fixed default.
 
     # ---- LLM-as-judge baseline (B5): a PREFERENCE judge (no execution) ----
     judge_hit: float = 0.90        # P(judge labels a truly-correct answer correct)

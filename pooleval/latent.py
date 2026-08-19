@@ -33,12 +33,26 @@ def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4,
     model produced): every model then scores wrong on that item, which is exactly the
     candidate-coverage fix that unlabeled consensus cannot make.
     """
-    M, N = obs.shape
+    M_pool, N = obs.shape
     group = run.group
     G = run.n_groups
     prior = run.prior
     prior_sigma = run.prior_sigma
     constraints = dict(constraints or {})
+
+    # "learned" verifier: append it as one extra voter in a provenance group of its
+    # own, with an uninformative prior, and let the M-step estimate its reliability
+    # exactly like a pool member. Its vote is then weighted by w = a_verifier, on the
+    # same scale as everyone else's, instead of a hand-set constant.
+    learned_v = (cfg.use_verifier and getattr(cfg, "verifier_mode", "fixed") == "learned"
+                 and getattr(run, "verifier_guess", None) is not None)
+    if learned_v:
+        obs = np.vstack([obs, np.asarray(run.verifier_guess, dtype=obs.dtype)[None, :]])
+        group = np.concatenate([group, [G]])
+        G = G + 1
+        prior = np.concatenate([prior, [0.5]])
+        prior_sigma = np.concatenate([prior_sigma, [1e3]])   # uninformative
+    M = obs.shape[0]
 
     # init
     init = init or {}
@@ -95,7 +109,7 @@ def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4,
             score = {int(k): 0.0 for k in ks}
             for m in range(M):
                 score[int(col[m])] += contrib[m]
-            if cfg.use_verifier:
+            if cfg.use_verifier and not learned_v:
                 vg = int(run.verifier_guess[i])
                 if vg in score:
                     score[vg] += cfg.verifier_strength
@@ -146,11 +160,20 @@ def run_em(obs, run, cfg, verbose=False, init=None, max_iters=None, tol=1e-4,
     else:
         n_iters = n_iters
 
+    # drop the synthetic verifier row before reporting: it is a measurement channel,
+    # not a pool member being evaluated.
+    if learned_v:
+        a_verifier = float(a[-1])
+        obs, agree = obs[:M_pool], agree[:M_pool]
+        a, a_sig, u, group = a[:M_pool], a_sig[:M_pool], u[:G - 1], group[:M_pool]
+        M = M_pool
+    else:
+        a_verifier = None
     cbar, Meff = _effective_models(obs, agree, M, group)
     flag = _collusion_flag(obs, group, run)
     return dict(acc=a, b=b, u=u, agree=agree, latent_post=latent_post,
                 cbar=cbar, Meff=Meff, collusion=flag, a_sigma=a_sig,
-                n_iters=n_iters)
+                n_iters=n_iters, a_verifier=a_verifier)
 
 
 def _estimate_loadings(obs, agree, group, G):

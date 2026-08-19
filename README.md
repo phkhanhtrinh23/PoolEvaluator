@@ -383,6 +383,21 @@ python -m zoo.collision_formulation_real --bootstrap 500
 python -m zoo.collision_active_real --bootstrap 400
 ```
 
+## Beyond Text2SQL: image and node classification
+
+`pooleval/domains/` ports the estimator to image classification (MNIST -> USPS /
+SVHN, MetaEvaluator's architectures) and node classification (ACMv9 / Citationv1 /
+DBLPv7, GNNEvaluator's GNNs) on real trained pools. The EM core is unchanged --
+only the observation kernel, prior, and verifier are domain-specific. Results,
+the three anchor defects the ports exposed, and the `verifier_mode="learned"`
+mitigation are in [`docs/domain_ports.md`](docs/domain_ports.md).
+
+```bash
+python experiments/run_domain_graph.py
+python experiments/run_domain_vision.py
+python experiments/run_domain_diagnostics.py --kind graph
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
