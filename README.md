@@ -355,7 +355,7 @@ python tests/test_smoke.py && python tests/test_active.py     # or: pytest -q
 ## Experimental closed-form formulation
 
 The full beginner-friendly derivation of the collision-aware E-step, auxiliary
-objective (Q), and numerical beta M-step is in
+objective $Q$, and numerical beta M-step is in
 [`docs/collision_em_beta_derivation.md`](docs/collision_em_beta_derivation.md).
 
 The alternative pseudo-label agreement EM in `new_formulation/` is implemented
@@ -373,12 +373,29 @@ are reported in
 The replay of saved real `gpt-5-mini` pseudo-label corrections after case-3 EM is
 reported in
 [`experiments/COLLISION_ACTIVE_REAL_RESULTS.md`](experiments/COLLISION_ACTIVE_REAL_RESULTS.md).
+The complete rerun is reported in
+[`experiments/COLLISION_RERUN_2026_08_14.md`](experiments/COLLISION_RERUN_2026_08_14.md).
 
 ```bash
 python experiments/run_new_formulation_comparison.py --seeds 8
 python -m zoo.new_formulation_real --bootstrap 500
 python -m zoo.collision_formulation_real --bootstrap 500
 python -m zoo.collision_active_real --bootstrap 400
+```
+
+## Beyond Text2SQL: image and node classification
+
+`pooleval/domains/` ports the estimator to image classification (MNIST -> USPS /
+SVHN, MetaEvaluator's architectures) and node classification (ACMv9 / Citationv1 /
+DBLPv7, GNNEvaluator's GNNs) on real trained pools. The EM core is unchanged --
+only the observation kernel, prior, and verifier are domain-specific. Results,
+the three anchor defects the ports exposed, and the `verifier_mode="learned"`
+mitigation are in [`docs/domain_ports.md`](docs/domain_ports.md).
+
+```bash
+python experiments/run_domain_graph.py
+python experiments/run_domain_vision.py
+python experiments/run_domain_diagnostics.py --kind graph
 ```
 
 ## License
