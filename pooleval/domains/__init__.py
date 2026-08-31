@@ -5,4 +5,5 @@
   vision   : obs = predicted class label                (exact match -- kernel is identity)
   graph    : obs = predicted node label                 (exact match -- kernel is identity)
 """
-from .adapter import from_predictions, pool_run_from_predictions   # noqa: F401
+from .adapter import from_predictions, pool_run_from_predictions
+from .collision import collision_estimates, source_gamma, gamma_from_run   # noqa: F401

@@ -13,6 +13,7 @@ from pooleval.config import Config                                   # noqa: E40
 from pooleval.inference import PoolEval                              # noqa: E402
 from pooleval.domains.adapter import from_predictions                # noqa: E402
 from pooleval.domains.baselines import confidence_baselines          # noqa: E402
+from pooleval.domains.collision import collision_estimates            # noqa: E402
 from baselines import Independent, Majority, DawidSkene, AgreementLine  # noqa: E402
 
 # B5 LLM-as-judge scores SQL text -- not portable to vision / graph.
@@ -27,16 +28,27 @@ def make_run_cfg(pool, **cfg_kw):
     return run, cfg
 
 
-def score_pool(pool, extra_variants=None):
-    """-> {method: metrics} against the withheld gold labels."""
+def score_pool(pool, extra_variants=None, collision=True):
+    """-> (rows, truth, diag) against the withheld gold labels.
+
+    ``collision=True`` additionally fits the binary and collision-aware
+    formulations of ``Trinh_proof.tex`` on top of PoolEval's pseudo-labels; the
+    collision rate gamma is measured on the source split, never the target.
+    """
     run, cfg = make_run_cfg(pool)
-    est = {"PoolEval": PoolEval(cfg).evaluate(run)["acc"]}
+    pseudo_out = PoolEval(cfg).evaluate(run, obs=run.true_class)
+    est = {"PoolEval": pseudo_out["acc"]}
     for b in POOL_BASELINES:
         est[b.name] = np.asarray(b.evaluate(run, cfg))
     est.update(confidence_baselines(pool))
     for label, kw in (extra_variants or {}).items():
         r, c = make_run_cfg(pool, **kw)
         est[label] = PoolEval(c).evaluate(r)["acc"]
+
+    diag = {}
+    if collision:
+        ce, diag = collision_estimates(pool, cfg, run, pseudo_out=pseudo_out)
+        est.update(ce)
 
     truth = run.true_acc
     rows = {}
@@ -47,7 +59,25 @@ def score_pool(pool, extra_variants=None):
                           spearman=float(spearmanr(a, truth).statistic),
                           kendall=float(kendalltau(a, truth).statistic),
                           top1_correct=bool(int(np.argmax(a)) == int(np.argmax(truth))))
-    return rows, truth
+    return rows, truth, diag
+
+
+def print_gamma(diag, indent="  "):
+    """Report the collision rates against the independent-error null 1/(K-1)."""
+    if not diag:
+        return
+    null = diag["null"]
+    print(f"{indent}gamma null (indep. errors, K={diag['n_classes']}) = {null:.3f}"
+          f"   alpha prior strength s = {diag['alpha_strength']:.0f}")
+    for split in ("source", "target"):
+        if split not in diag:
+            continue
+        d = diag[split]
+        g = ", ".join(f"{v:.3f}" for v in d["gamma"])
+        print(f"{indent}  {d['split']:16s} beta={d['beta']:.3f}  "
+              f"gamma=[{g}]  mean {sum(d['gamma'])/len(d['gamma']):.3f} "
+              f"({sum(d['gamma'])/len(d['gamma'])/null:.1f}x null)  "
+              f"n_eligible={int(sum(d['eligible']))}")
 
 
 def print_rows(rows, indent="  "):

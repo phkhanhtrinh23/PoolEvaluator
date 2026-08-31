@@ -10,7 +10,8 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from experiments._domain_eval import score_pool, print_rows, summarize   # noqa: E402
+from experiments._domain_eval import (score_pool, print_rows,   # noqa: E402
+                                      summarize, print_gamma)   # noqa: E402
 from pooleval.domains.graph import build_pool                            # noqa: E402
 
 TRANSFERS = [("A", "C"), ("A", "D"), ("C", "A"), ("C", "D"), ("D", "A"), ("D", "C")]
@@ -35,23 +36,25 @@ def main():
     ap.add_argument("--out", default="results/domain_graph.json")
     a = ap.parse_args()
 
-    allrows, per_transfer = {}, {}
+    allrows, per_transfer, gammas = {}, {}, {}
     for src, dst in TRANSFERS:
         print(f"\n=== {src} -> {dst} ===", flush=True)
         pool = get_pool(src, dst, tuple(range(a.seeds)), a.epochs, a.cache)
-        rows, truth = score_pool(pool, extra_variants={
+        rows, truth, diag = score_pool(pool, extra_variants={
             "PoolEval (learned verif.)": dict(verifier_mode="learned"),
             "PoolEval (no anchors)": dict(use_verifier=False, use_prior=False)})
         per_transfer[f"{src}->{dst}"] = rows
+        gammas[f"{src}->{dst}"] = diag
         print(f"  true target acc: {truth.min():.3f}-{truth.max():.3f} "
               f"(mean {truth.mean():.3f}), N={len(pool['gold'])}")
+        print_gamma(diag)
         print_rows(rows)
         for k, v in rows.items():
             allrows.setdefault(k, []).append(v)
 
     summary = summarize(allrows, "MEAN OVER 6 TRANSFERS")
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
-    json.dump(dict(per_transfer=per_transfer, summary=summary), open(a.out, "w"), indent=2)
+    json.dump(dict(per_transfer=per_transfer, summary=summary, gamma=gammas), open(a.out, "w"), indent=2)
     print(f"\nwrote {a.out}")
 
 
