@@ -71,14 +71,21 @@ PoolEval                  0.2420  +0.0002  -0.746
 B1 Independent            0.2918  +0.2918  -0.403
 ```
 
-MNIST → SVHN is reported in the JSON but is a **degenerate regime**: true target
-accuracy is 0.062–0.355 with K = 10, so most of the pool is *below chance*. Every
-label-free method fails there with bias between +0.46 and +0.85 and negative rank
-correlation. This is not a tuning problem — it is the Dawid–Skene identifiability
-theorem. The likelihood is invariant under flipping the latent labels and
-replacing each `a_m` with its complement, so "the crowd is accurate" and "the
-crowd is anti-accurate" fit the data equally well; only the assumption that
-annotators beat chance breaks the tie, and here that assumption is false.
+MNIST → SVHN is a **degenerate regime**: true target accuracy is 0.062–0.355
+with K = 10, so most of the pool is *below chance*. Every method listed above
+fails there, with bias between +0.46 and +0.85 and negative rank correlation.
+
+> **Correction (later work).** An earlier version of this document attributed
+> that failure to the Dawid–Skene identifiability theorem and called it
+> unsalvageable. That was too strong. It is a *uniform-error* failure, not an
+> identifiability failure: under this shift six models collapse to emitting one
+> class for 96–98% of items, and one-coin DS reads their mutual agreement as
+> accuracy (scoring them 0.96–0.98 against a true 0.06). Giving each model a
+> confusion matrix instead makes a collapsed model visibly uninformative — its
+> confusion rows become identical — and recovers the case: MAE 0.5598 → 0.1528
+> and rho −0.886 → **+0.829**. See [`multiclass_ds.md`](multiclass_ds.md) §5.
+> The identifiability symmetry is still real; it just was not what was binding
+> here.
 
 ## Three defects the ports exposed
 
@@ -280,3 +287,11 @@ So the experiment supports the proof and bounds its scope:
 
 Reproduce with `python experiments/run_domain_{graph,vision}.py`; γ diagnostics
 land in the `gamma` field of `results/domain_{graph,vision}.json`.
+
+**Follow-up.** [`multiclass_ds.md`](multiclass_ds.md) takes the conclusion of
+this section seriously and asks what the right closed-label-space estimator
+actually is. Short answer: textbook multiclass Dawid–Skene, closed form in both
+steps — but its *implied* collision rate `1/(K-1)` is wrong by 1.9×–6.4× on
+these same pools, and fixing that with per-model confusion matrices beats every
+estimator in the tables above on vision (MAE 0.0872, rho +0.914, top-1 correct in
+both shifts).

@@ -398,6 +398,17 @@ python experiments/run_domain_vision.py
 python experiments/run_domain_diagnostics.py --kind graph
 ```
 
+[`docs/multiclass_ds.md`](docs/multiclass_ds.md) works through what the right
+estimator is once the answer space is a closed set of K classes: why the
+collision rate `gamma` is not needed there, the closed-form multiclass EM, a
+measurement showing Dawid--Skene's uniform-error assumption is violated by
+1.9x-6.4x on real pools, and the confusion-matrix fix that turns MNIST -> SVHN
+from a total failure (rho -0.886) into a solved case (rho +0.829).
+
+```bash
+python experiments/run_ds_assumption.py
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

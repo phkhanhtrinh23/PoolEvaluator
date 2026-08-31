@@ -14,6 +14,7 @@ from pooleval.inference import PoolEval                              # noqa: E40
 from pooleval.domains.adapter import from_predictions                # noqa: E402
 from pooleval.domains.baselines import confidence_baselines          # noqa: E402
 from pooleval.domains.collision import collision_estimates            # noqa: E402
+from pooleval.domains.multiclass_ds import ds_estimates               # noqa: E402
 from baselines import Independent, Majority, DawidSkene, AgreementLine  # noqa: E402
 
 # B5 LLM-as-judge scores SQL text -- not portable to vision / graph.
@@ -44,6 +45,11 @@ def score_pool(pool, extra_variants=None, collision=True):
     for label, kw in (extra_variants or {}).items():
         r, c = make_run_cfg(pool, **kw)
         est[label] = PoolEval(c).evaluate(r)["acc"]
+
+    # Textbook multiclass Dawid--Skene, on RAW predicted labels. B3 above is
+    # latent.py with its components switched off, which is a weighted vote, not
+    # the DS likelihood -- these two are the real closed forms.
+    est.update(ds_estimates(pool))
 
     diag = {}
     if collision:
