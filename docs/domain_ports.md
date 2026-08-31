@@ -183,3 +183,100 @@ puts the weight on `corr_risk`.
   information, so consensus is the only available signal — the strongest case for
   a pool, and the exact opposite of the graph transfers where the prior is the
   single best-ranking method.
+
+## The collision-aware formulation on the new domains
+
+`Trinh_proof.tex` ("Collisions: Which Closed Forms Survive") drops the hidden
+assumption `P(C=1 | Z=0) = 1-β`, which says a wrong model and a wrong
+pseudo-label *always* produce the same wrong answer. That is forced for K=2 and
+false everywhere else. Replacing it with `P(C=1 | Z=0) = (1-β)γ_g` keeps the
+E-step and the α M-step in closed form and costs only the β M-step, which becomes
+a concave one-dimensional maximization (`pooleval/new_formulation.py:200-210`).
+
+The closed-label-space ports are the natural place to test it, because there `γ`
+has an exact analytic null: under independent errors over `K` classes a wrong
+model lands on the pseudo-label's wrong class with probability `1/(K-1)`.
+
+`pooleval/domains/collision.py` estimates `γ_g` on the **source validation
+split** — never the target — by running the identical pipeline (PoolEval →
+argmax pseudo-label → count wrong-model / wrong-pseudo-label matches per
+provenance group), the domain analogue of the leave-one-dataset-out estimate in
+`zoo/collision_formulation_real.py`.
+
+### Collisions are real, large, and not close to either extreme
+
+| domain | K | null `1/(K-1)` | γ̂ source | γ̂ target (oracle) | ratio to null |
+|---|---|---|---|---|---|
+| node (6 transfers) | 5 | 0.250 | **0.863** | 0.803 | 3.4× |
+| image (2 shifts) | 10 | 0.111 | **0.924** | 0.605 | 8.3× |
+
+Both extremes in the literature are wrong. `γ=1` (the pre-collision binary
+model) overstates collision; `γ=1/(K-1)` (independent errors, what a naive
+multi-class Dawid–Skene assumes) understates it by 3–8×. The pool's wrong
+answers really do collide — which is exactly the shared-error signal
+MetaEvaluator and GNNEvaluator go after with learned shift descriptors, here read
+straight off the pool with no meta-training.
+
+### The correction works, in 8 of 8 runs
+
+| | node, mean MAE | image, mean MAE |
+|---|---|---|
+| NF binary EM (γ=1) | 0.2502 | 0.4173 |
+| NF collision (γ=1/(K−1)) | 0.2146 | 0.4055 |
+| **NF collision (γ from source)** | **0.2106** | **0.4072** |
+| NF collision (γ oracle, diagnostic) | 0.2311 | 0.4072 |
+
+Going from γ=1 to source-measured γ lowers MAE in **every single run** — all six
+graph transfers (−0.034 to −0.046) and both vision shifts (−0.019, −0.001). The
+proof's correction is not cosmetic: on graph it removes 16% of the binary model's
+error.
+
+### Two honest caveats
+
+**γ does not transfer as well as it needs to.** The means in the table above look
+close on graph, but per group they are not: correlation between source and target
+γ is only **+0.262** across the 30 graph groups, and the vision estimate is
+nearly flat (0.873–0.973) while the truth is wildly heterogeneous
+(0.119–0.974) — ConvNeXt and the two transformer families collide at completely
+different rates under shift, and the source split cannot see it. The mechanism is
+visible in the diagnostics: source pseudo-labels are near-perfect (β̂ = 0.995 on
+MNIST), so the *only* eligible both-wrong pairs are the genuinely ambiguous
+items, which are precisely the ones everybody gets wrong the same way. 467
+eligible pairs, selected for collusion. Under shift, errors spread to ordinary
+items where mistakes are idiosyncratic, and γ falls.
+
+**Oracle γ scores *worse* than source γ on MAE, in both domains.** That is not a
+bug and it is worth stating plainly: MAE here is dominated by a common positive
+bias, and a larger γ makes an observed agreement weaker evidence of correctness,
+pushing every α̂ down. Since γ̂_source > γ_target, the overestimate cancels bias
+it was not modelling. On *ranking* the oracle does win on graph (rho +0.791 vs
++0.775). The correct reading is that γ mostly sets the **level**, not the order.
+
+### The result that matters most: don't do the binary reduction here at all
+
+Every member of the binary family loses to the multiclass estimator it is built
+on top of — node: best NF 0.2106 vs PoolEval 0.1531; image: best NF 0.4055 vs
+Dawid–Skene 0.2992.
+
+This is structural, not a tuning failure. `pooleval/latent.py` never collapses
+the pool: it keeps the full multiclass observation matrix, so a collision is
+*directly observed* — two models emitting the same wrong class land on the same
+key of the per-item score. The binary formulation reduces the pool to
+`C[j,i] = 1{model j agrees with the pseudo-label}` and throws away *which* wrong
+answer each model gave; `γ_g` is one scalar per group trying to summarise what
+the full matrix records exactly. Fitting γ recovers a large part of that loss
+(16% on graph) but cannot recover all of it.
+
+So the experiment supports the proof and bounds its scope:
+
+- The collision correction is **necessary** wherever the binary reduction is
+  used — γ=1 is badly wrong for K>2, and it is wrong in a measurable direction.
+- The binary reduction is **worth making only when the answer space is
+  unbounded**. In Text2SQL an "answer" is an execution result table, there is no
+  finite class set to index, and collapsing to agreement-with-pseudo-label is a
+  genuine simplification. In image and node classification the class set is
+  closed and small, the full matrix is free, and reducing to a binary matrix is
+  pure information loss.
+
+Reproduce with `python experiments/run_domain_{graph,vision}.py`; γ diagnostics
+land in the `gamma` field of `results/domain_{graph,vision}.json`.
