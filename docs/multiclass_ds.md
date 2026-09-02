@@ -89,9 +89,15 @@ loses to a multiclass estimator built on the same data:
 | binary EM, γ measured on source | 0.2106 | 0.4072 |
 | **multiclass (best below)** | **0.1531** | **0.0872** |
 
-Fitting γ recovers a lot of what the reduction cost — 16% of the error on
-graph, in 8 of 8 runs — but never all of it. **If your answer space is
-enumerable, do not binarise.**
+Fitting γ does **not** close that gap. Under a controlled ablation (anchors and
+β initialisation held fixed, only γ varied) source-measured γ beats γ=1 in just
+1 of 8 runs, and the whole γ range spans under 0.006 MAE — because γ enters only
+as `(1−β)γ`, and with β ≈ 0.90 that term is swamped by `αβ`. γ earns its keep
+where the pseudo-label is weak, which is Text2SQL's regime (MAE 18.3 → 11.3
+there), not this one. See `experiments/run_gamma_ablation.py`.
+
+**If your answer space is enumerable, do not binarise** — and if you do binarise
+here, γ will not rescue it.
 
 ---
 

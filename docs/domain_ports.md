@@ -224,19 +224,49 @@ answers really do collide — which is exactly the shared-error signal
 MetaEvaluator and GNNEvaluator go after with learned shift descriptors, here read
 straight off the pool with no meta-training.
 
-### The correction works, in 8 of 8 runs
+### The correction does almost nothing here — the apparent gain was the α anchor
 
-| | node, mean MAE | image, mean MAE |
-|---|---|---|
-| NF binary EM (γ=1) | 0.2502 | 0.4173 |
-| NF collision (γ=1/(K−1)) | 0.2146 | 0.4055 |
-| **NF collision (γ from source)** | **0.2106** | **0.4072** |
-| NF collision (γ oracle, diagnostic) | 0.2311 | 0.4072 |
+> **Correction.** An earlier version of this section claimed the collision
+> correction lowered MAE in 8 of 8 runs. That comparison was **confounded** and
+> the claim was wrong. `NF binary EM (γ=1)` runs `agreement_em`, which uses
+> `run.prior` only as an *initialiser*; the collision variants run
+> `collision_agreement_em`, which keeps it as a Beta anchor and starts β from the
+> source estimate. The 0.2502 → 0.2106 improvement was almost entirely those two
+> changes, not γ.
 
-Going from γ=1 to source-measured γ lowers MAE in **every single run** — all six
-graph transfers (−0.034 to −0.046) and both vision shifts (−0.019, −0.001). The
-proof's correction is not cosmetic: on graph it removes 16% of the binary model's
-error.
+`experiments/run_gamma_ablation.py` holds the anchors and the β initialisation
+fixed and varies only γ:
+
+| node, 6 transfers | MAE | ρ | | image, 2 shifts | MAE | ρ |
+|---|---|---|---|---|---|---|
+| **γ = 1** | **0.2092** | +0.782 | | γ = 1 | 0.4076 | −0.812 |
+| γ = 1/(K−1) | 0.2146 | +0.782 | | **γ = 1/(K−1)** | **0.4055** | −0.812 |
+| γ = source | 0.2106 | +0.775 | | γ = source | 0.4072 | −0.812 |
+
+Source-measured γ beats γ=1 in **1 of 8 runs**, not 8 of 8 — and on node γ=1 wins
+all six. The spread across the whole γ range is under 0.006 MAE, and ρ is
+essentially unmoved. For reference, the confounded number: adding the α anchor
+alone takes node from 0.2502 to 0.2092.
+
+**Why γ is nearly inert in these domains.** It enters the likelihood only through
+the product `(1−β)γ`. Sweeping γ over a 10× range moves the estimate barely at
+all:
+
+| γ (graph A→C) | fitted β | (1−β)γ | mean α̂ |
+|---|---|---|---|
+| 0.10 | 0.9221 | 0.0078 | 0.7621 |
+| 0.50 | 0.9123 | 0.0438 | 0.7607 |
+| 1.00 | 0.9019 | 0.0981 | 0.7545 |
+
+Total swing in mean α̂ across that 10× range: **0.0076** (0.0393 on vision). With
+β ≈ 0.90 the collision term `(1−α)(1−β)γ ≈ 0.024` is swamped by `αβ ≈ 0.68`, so
+an agreement is overwhelming evidence of correctness whatever γ says.
+
+**γ's influence scales with `(1−β)/β`** — it matters when the pseudo-label is
+*bad*. That is a sharper account of the Text2SQL / classification split than
+"closed label space": on the real Text2SQL zoo the collision-aware variants beat
+the pre-collision one by a wide margin (MAE 11.1–11.3 vs 18.3), because there the
+pseudo-labels are far weaker. Here they are not.
 
 ### Two honest caveats
 
