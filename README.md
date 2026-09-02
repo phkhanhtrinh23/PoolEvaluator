@@ -412,6 +412,13 @@ full DS's grows as K^2). One result is exact rather than empirical: in a pool
 with one model per family, PoolEval's provenance discount is provably inert
 (`max|on-off| = 0`), so it degenerates to a weaker one-coin DS.
 
+A section on estimate SPREAD explains why the MAE and ranking columns disagree
+throughout: every estimator shares the same positive bias, so MAE only measures
+its size. PoolEval under-spreads (vote weight capped at a 19.8x ratio, plus
+shrinkage toward the source prior) and so wins MAE; DS over-spreads (log-odds
+weight, ratio ~1881x, amplified by EM feedback) and so wins ranking. Offsets are
+removable with one labelled anchor; orderings are not.
+
 ```bash
 python experiments/run_ds_assumption.py
 python experiments/run_regime_scenarios.py
