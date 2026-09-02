@@ -405,8 +405,15 @@ measurement showing Dawid--Skene's uniform-error assumption is violated by
 1.9x-6.4x on real pools, and the confusion-matrix fix that turns MNIST -> SVHN
 from a total failure (rho -0.886) into a solved case (rho +0.829).
 
+It also reports which estimator wins in which regime -- small target set, many
+classes, imbalanced classes -- with the crossover set by observations per free
+parameter (PoolEval's parameter count is independent of K; full DS's grows as
+K^2).
+
 ```bash
 python experiments/run_ds_assumption.py
+python experiments/run_regime_scenarios.py
+python experiments/run_gamma_ablation.py
 ```
 
 ## License

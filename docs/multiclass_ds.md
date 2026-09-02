@@ -319,7 +319,109 @@ argument that rescued the binary β-step may transfer.
 
 ---
 
-## 7. What to actually use
+## 7. Which estimator wins in which regime
+
+The choice between PoolEval's single reliability scalar and full DS's confusion
+matrices is a bias/variance trade, and one quantity sets the crossover:
+**observations per free parameter.**
+
+| | free parameters | grows with K? |
+|---|---|---|
+| PoolEval (anchor, collision-aware) | `M` α + 1 β + `G` group loadings (+ `G` γ, *fixed* from source) | **no** |
+| full DS | `M·K(K−1) + (K−1)` | **quadratically** |
+
+So full DS should win when data is plentiful relative to `K`, and lose when the
+target set is small, `K` is large, or rare classes starve individual confusion
+rows. All three are measured by `experiments/run_regime_scenarios.py`.
+
+> One simplification worth stating up front: **γ is nearly inert in these
+> domains** (§2), so "PoolEval with anchor and collision-awareness" behaves
+> essentially like "PoolEval with anchor" here. The anchor is what matters.
+
+### Scenario 1 — small unlabelled target set
+
+Real pool, items subsampled, 5 repetitions (MAE / ρ):
+
+| N | obs per DS-full param | PoolEval | DS one-coin | DS full |
+|---|---|---|---|---|
+| 50 | 0.56 | 0.1937 / −0.077 | **0.0427 / +0.960** | 0.0898 / +0.798 |
+| 100 | 1.11 | 0.2229 / −0.412 | **0.0472 / +0.949** | 0.0709 / +0.838 |
+| 200 | 2.22 | 0.1942 / −0.234 | 0.0447 / +0.933 | **0.0287 / +0.965** |
+| 1000 | 11.1 | 0.2260 / −0.541 | 0.0351 / +0.989 | **0.0220 / +0.997** |
+| 2007 | 22.3 | 0.2420 / −0.746 | 0.0356 / +0.996 | **0.0216 / +1.000** |
+
+*(MNIST→USPS, K=10, M=15, 1350 full-DS parameters.)*
+
+**The crossover is at roughly 2 observations per parameter.** Below it the
+confusion matrices are noise that the E-step then trusts. On the graph pool
+(K=5, only 300 parameters) full DS never overfits even at N=50 — so the
+crossover is driven by `K`, not by `N` alone.
+
+Note the shape of PoolEval's anchor: its weight is `s/(N+s)`, so it dominates
+exactly when data is scarce and fades when it is not (0.36% at N=8935). That is
+structurally a small-N device, which is the right design — see
+[`domain_ports.md`](domain_ports.md) §1, where the same property reads as a
+*defect* because the Text2SQL anchors were tuned for N ≈ 400.
+
+### Scenario 2 — many classes
+
+`K` beyond what these datasets offer, so this one is **simulated**: N fixed at
+400, M=9, three provenance groups, accuracies 0.20–0.50, within-group collusion
+0.6.
+
+| K | obs per DS-full param | PoolEval | DS one-coin | DS full |
+|---|---|---|---|---|
+| 5 | 20.0 | 0.0238 | 0.0578 | **0.0052** |
+| 10 | 4.44 | 0.0197 | 0.0244 | **0.0019** |
+| 20 | 1.05 | 0.0664 | 0.0257 | **0.0014** |
+| 50 | 0.16 | 0.0783 | 0.0285 | **0.0134** |
+| 100 | 0.04 | 0.0835 | **0.0312** | 0.0802 |
+
+Full DS wins comfortably up to K≈50 and then falls off a cliff — MAE 0.0134 →
+0.0802 between K=50 and K=100 — while one-coin barely moves (0.0244 → 0.0312)
+because its parameter count does not depend on `K` at all. Laplace smoothing
+holds full DS up further than raw counting would; it is still winning at 0.16
+observations per parameter.
+
+### Scenario 3 — imbalanced classes
+
+The clearest failure. Real graph pool, resampled to a power law with **N held
+fixed at 800**, so nothing changes except the class distribution:
+
+| imbalance | rarest class n | PoolEval ρ | DS one-coin ρ | DS full ρ |
+|---|---|---|---|---|
+| 1.0× | 160 | +0.741 | +0.928 | **+0.940** |
+| 11.3× | 40 | +0.752 | **+0.920** | +0.873 |
+| 134.8× | 5 | +0.659 | **+0.861** | +0.607 |
+| 385.5× | 2 | +0.669 | **+0.925** | **+0.559** |
+
+**Full DS's ranking collapses (+0.940 → +0.559) while one-coin is flat.** The
+mechanism: the row `π_j[c,·]` for a rare class is estimated from 2–5 items, but
+it is then used in the E-step for *every* item where any model votes that class.
+A few starved rows poison the whole posterior. A single scalar `α_j` cannot
+fragment that way, so it is immune.
+
+The same pattern appears on vision (full DS +0.999 → +0.857, one-coin +0.989 →
++0.899), though less sharply.
+
+### Summary
+
+| regime | use | why |
+|---|---|---|
+| small N | **one-coin** (or PoolEval) | full DS needs ≳2 observations per parameter |
+| large K | **one-coin** (or PoolEval) | full DS is O(K²) parameters; data is O(N) |
+| imbalanced classes | **one-coin** | starved rare-class rows drive the E-step everywhere |
+| large N, small K, balanced | **full DS** | it can afford the parameters, and non-uniform errors are real |
+
+**Two caveats.** First, PoolEval's *baseline* ranking on these pools is lower to
+begin with (ρ +0.74 vs +0.93 balanced), so "robust to imbalance" partly means
+"already worse". In the robust regimes **one-coin DS, not PoolEval, is usually
+the better choice** — it is as robust and starts from a much better baseline.
+Second, MAE and ranking diverge: full DS keeps an MAE edge even where its ranking
+collapses. If you want a *number*, full DS; if you want an *order* under
+imbalance, one-coin.
+
+## 8. What to actually use
 
 | your setting | use | why |
 |---|---|---|
