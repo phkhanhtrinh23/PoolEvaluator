@@ -465,9 +465,14 @@ choose one model per family — it improves every estimator, and it means you no
 longer need the provenance machinery at all. The group discount is insurance
 against a pool you did not get to design.
 
+> **Do not read the MAE column on its own here.** In every one of these rows MAE
+> equals the bias exactly — every method over-estimates every model — so MAE is
+> measuring the size of a shared offset, not how well an estimator separates
+> models. Strip the offset and PoolEval loses 3 of 4 configurations. §8 works
+> through why.
+
 *(Caveat: with M=5, Spearman is computed on five points and is therefore coarse —
-+0.100 and +0.300 differ by one swap. The MAE column and the inertness check are
-the solid parts.)*
++0.100 and +0.300 differ by one swap. The inertness check is the exact part.)*
 
 ### Summary
 
@@ -487,7 +492,172 @@ Second, MAE and ranking diverge: full DS keeps an MAE edge even where its rankin
 collapses. If you want a *number*, full DS; if you want an *order* under
 imbalance, one-coin.
 
-## 8. What to actually use
+## 8. Why PoolEval under-spreads and DS over-spreads
+
+This is the single most important thing to understand before reading any MAE
+column in this document, because it explains a result that otherwise looks
+contradictory: **PoolEval wins MAE almost everywhere and loses ranking almost
+everywhere.**
+
+### The observation: MAE here *is* bias
+
+Decomposing the scenario-4 numbers (fixed M=5):
+
+| pool / composition | method | MAE | bias | **MAE with bias removed** | ρ |
+|---|---|---|---|---|---|
+| graph A→C, 5 fams | PoolEval | 0.0929 | +0.0929 | 0.0683 | +0.300 |
+| | DS one-coin | 0.1317 | +0.1317 | **0.0356** | +0.900 |
+| | DS full | 0.1237 | +0.1237 | 0.0456 | **+1.000** |
+| svhn→mnist, 5 fams | PoolEval | 0.0840 | +0.0840 | 0.0451 | +0.900 |
+| | DS one-coin | 0.1155 | +0.1155 | **0.0325** | +0.900 |
+| | DS full | 0.1061 | +0.1061 | 0.0352 | +0.900 |
+| svhn→mnist, 3+2 | PoolEval | 0.1232 | +0.1232 | 0.0180 | +0.100 |
+| | DS one-coin | 0.1399 | +0.1399 | 0.0094 | +0.900 |
+| | DS full | 0.1362 | +0.1362 | **0.0092** | **+1.000** |
+
+**MAE equals bias to four decimals in every row.** Every method over-estimates
+every model — that is the gauge trap, and it is common to all of them. So the
+MAE column measures only *the size of a shared offset*; it says nothing about
+whether an estimator can tell models apart. Remove the offset and PoolEval loses
+3 of 4 configurations.
+
+The remaining question is why the offsets differ, and the answer is spread.
+
+### Spread against the truth
+
+| pool | true spread | PoolEval + anchor | PoolEval no anchor | DS one-coin | DS full |
+|---|---|---|---|---|---|
+| graph A→C | 0.466 | 0.501 | 0.595 | 0.597 | 0.634 |
+| graph D→A | 0.308 | 0.413 | 0.514 | 0.565 | 0.612 |
+| svhn→mnist | 0.527 | 0.357 | 0.542 | 0.569 | 0.594 |
+
+Three mechanisms produce this, and they can be measured separately.
+
+### Mechanism 1 — the vote-weight transform (compresses PoolEval)
+
+Both estimators aggregate votes; they weight them differently.
+
+| α | PoolEval `clip(α, 0.05, 0.99)` | DS `log[α(K−1)/(1−α)]`, K=5 |
+|---|---|---|
+| 0.05 | 0.050 | **−1.558** |
+| **0.20 = 1/K** | 0.200 | **0.000** |
+| 0.40 | 0.400 | +0.981 |
+| 0.70 | 0.700 | +2.234 |
+| 0.99 | 0.990 | +5.981 |
+
+PoolEval's weight is the accuracy itself, clipped: the best model can out-vote
+the worst by at most **19.8×**. DS's weight is a log-odds, so the same two models
+differ by 7.54 in log space — a vote ratio of **e^7.54 ≈ 1881×**, roughly 95×
+more separation.
+
+And note the two rows in bold. DS's weight is **exactly zero at chance accuracy**
+(`α(K−1)/(1−α) = 1 ⟺ α = 1/K`) and **negative below it** — a sub-chance model
+votes *against* its own answer. PoolEval's floor is +0.05, always positive.
+
+The consequence for spread: with a bounded weight, weak models keep pulling the
+consensus toward their answers. Everyone is then scored against a target that
+sits between the good models and the bad ones, so good models score lower than
+they should and bad ones higher. **The estimates are squeezed toward each
+other.** DS's aggressive weighting lets good models dominate the consensus, which
+preserves — and then amplifies — the separation.
+
+This is not an accident, and the code says so. From `pooleval/latent.py:61-66`:
+
+> ```
+> # reliability weight = estimated accuracy, always positive and bounded in
+> # (0,1). Bounded (not logit) avoids the high-a -> peaked-consensus -> higher-a
+> # runaway; keeping it strictly positive avoids the opposite collapse where
+> # sub-0.5 models get zero weight and the consensus loses all information.
+> ```
+
+PoolEval **deliberately damps** the feedback loop that DS runs at full strength.
+The trade documented here is exactly the one that comment is making, measured.
+
+### Mechanism 2 — the anchor (pulls spread toward the *prior's* spread)
+
+The anchor fuses the data estimate with the source prior. It does not compress
+unconditionally — it pulls the estimated spread toward whatever spread the prior
+has:
+
+| pool | prior spread | true spread | effect |
+|---|---|---|---|
+| graph A→C | 0.524 | 0.466 | slight inflation (0.501) |
+| graph D→A | 0.502 | 0.308 | inflation (0.413) |
+| svhn→mnist | 0.404 | 0.527 | **compression** (0.357) |
+| MNIST→USPS | **0.012** | 0.565 | **severe compression** |
+
+The last row is the pathological case, and it explains PoolEval's negative ρ on
+that pool. Every model reaches ≈0.99 on MNIST, so the prior is nearly a constant
+— and worse, it is *anti-correlated* with target accuracy:
+
+| pool | ρ(prior, true target accuracy) |
+|---|---|
+| graph A→C | +0.781 |
+| graph D→A | +0.924 |
+| svhn→mnist | +0.832 |
+| **MNIST→USPS** | **−0.625** |
+
+**Shrinkage preserves ranking only if the prior ranks correctly.** On graph it
+roughly does, so the cost is modest. On MNIST→USPS it ranks *backwards*, so
+shrinking toward it actively destroys the ordering. Turning the anchor off
+recovers both the spread and the ranking every time:
+
+| pool | ρ with anchor | ρ without |
+|---|---|---|
+| graph A→C | +0.864 | **+0.964** |
+| graph D→A | +0.654 | **+0.814** |
+| svhn→mnist | +0.868 | **+0.982** |
+
+### Mechanism 3 — EM feedback (inflates DS)
+
+DS's over-spread is not present at initialisation; the EM loop builds it. A model
+slightly above average gets more weight, the consensus moves toward it, so it
+agrees with the consensus more, so its α rises, so it gets more weight again.
+Watching that run:
+
+| EM iterations | est. spread (graph A→C) | best/worst vote ratio | ρ |
+|---|---|---|---|
+| 1 | 0.543 | 15× | +0.939 |
+| 2 | 0.588 | 20× | +0.939 |
+| 3 | 0.594 | 21× | +0.939 |
+| 5 | 0.596 | 22× | +0.961 |
+| 200 | 0.597 | 22× | +0.961 |
+
+*(true spread 0.466)*
+
+The spread grows monotonically, crosses the truth between iterations 1 and 2, and
+settles above it. Same on svhn→mnist: 0.465 → 0.569 against a true 0.527.
+
+**But notice the ρ column: it improves as the spread inflates** (+0.939 →
++0.961). The feedback is monotone in the initial signal, so it exaggerates
+differences without reordering them. That is the crux — **over-spreading is a
+level error, not an ordering error.**
+
+### Why this decides which metric to trust
+
+| | spread | MAE | ranking |
+|---|---|---|---|
+| PoolEval (anchored) | under | **good** | poor |
+| DS | over | poor | **good** |
+
+A method that compresses toward the middle gets closer to every model on average
+— that is why PoolEval wins MAE — but it flattens the very differences you need
+to choose a model. A method that exaggerates differences overshoots the level but
+keeps the order.
+
+The asymmetry that matters in practice: **a constant offset is removable the
+moment you have one labelled anchor; a wrong ranking is not recoverable at all.**
+So if the goal is model selection, read ρ and DS wins. If the goal is to report
+an accuracy number, note that all three are +0.08 to +0.19 too high — none is
+usable uncorrected, and the MAE ordering among them is a comparison of failures,
+not a comparison of successes.
+
+The obvious synthesis — DS's log-odds weighting for ordering, plus a
+bias-correction for the level — is not implemented here, and is a cleaner target
+than either estimator alone. Reproduce all of the above with
+`experiments/run_regime_scenarios.py`.
+
+## 9. What to actually use
 
 | your setting | use | why |
 |---|---|---|
@@ -497,6 +667,12 @@ imbalance, one-coin.
 | you have reliable source-domain accuracies | add them as a Beta prior | but see `domain_ports.md` §1 — large N silences it |
 
 Short version of the whole note:
+
+0. MAE and ranking disagree throughout, because every estimator shares the same
+   positive bias and MAE only measures its size. PoolEval under-spreads (bounded
+   vote weight + shrinkage to the prior) so it wins MAE; DS over-spreads
+   (log-odds weight + EM feedback) so it wins ranking. Offsets are correctable,
+   orderings are not — see §8.
 
 1. Don't binarise if you can enumerate the classes — γ only exists to repair
    information the reduction destroyed.
