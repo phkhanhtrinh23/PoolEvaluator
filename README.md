@@ -406,9 +406,11 @@ measurement showing Dawid--Skene's uniform-error assumption is violated by
 from a total failure (rho -0.886) into a solved case (rho +0.829).
 
 It also reports which estimator wins in which regime -- small target set, many
-classes, imbalanced classes -- with the crossover set by observations per free
-parameter (PoolEval's parameter count is independent of K; full DS's grows as
-K^2).
+classes, imbalanced classes, heterogeneous pool -- with the crossover set by
+observations per free parameter (PoolEval's parameter count is independent of K;
+full DS's grows as K^2). One result is exact rather than empirical: in a pool
+with one model per family, PoolEval's provenance discount is provably inert
+(`max|on-off| = 0`), so it degenerates to a weaker one-coin DS.
 
 ```bash
 python experiments/run_ds_assumption.py
