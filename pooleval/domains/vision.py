@@ -171,3 +171,61 @@ def build_pool(src="mnist", dst="usps", seeds=(0, 1, 2), families=FAMILIES,
                 prior=np.array(priors), verifier_guess=vg, names=names, n_classes=10,
                 prob_t=np.stack(prob_t), prob_s=np.stack(prob_s), src_gold_val=gold_va,
                 src=src, dst=dst)
+
+
+def build_pools_from_source(src, dsts, seeds=(0, 1, 2), families=FAMILIES,
+                            epochs=3, batch=256, n_target=None, device="cuda",
+                            verbose=True):
+    """Train {family x seed} ONCE on `src`, then evaluate on every target in `dsts`.
+
+    The per-pair `build_pool` retrains for each (src, dst), which is 3x wasteful
+    when running a transfer matrix -- and worse, it means the pool evaluated on
+    two different targets is not literally the same pool. This trains one set of
+    models per source and reuses it, which is both cheaper and the correct
+    controlled design: the only thing that changes across targets is the target.
+    """
+    device = device if torch.cuda.is_available() else "cpu"
+    tr_ds, va_ds = load_dataset(src, True, _tf(train=True)), load_dataset(src, False)
+    mk = lambda ds, sh: torch.utils.data.DataLoader(
+        ds, batch_size=batch, shuffle=sh, num_workers=4, pin_memory=True, drop_last=False)
+    tr, va = mk(tr_ds, True), mk(va_ds, False)
+    gold_va = np.array([int(va_ds[i][1]) for i in range(len(va_ds))])
+
+    targets = {}
+    for d in dsts:
+        te_ds = load_dataset(d, False)
+        if n_target is not None and n_target < len(te_ds):
+            g = torch.Generator().manual_seed(7)
+            te_ds = torch.utils.data.Subset(
+                te_ds, torch.randperm(len(te_ds), generator=g)[:n_target].tolist())
+        targets[d] = (mk(te_ds, False),
+                      np.array([int(te_ds[i][1]) for i in range(len(te_ds))]))
+
+    acc = {d: dict(pred=[], prob_t=[]) for d in dsts}
+    priors, group, names, prob_s = [], [], [], []
+    for gi, fam in enumerate(families):
+        for sd in seeds:
+            m = _train(build_model(fam), tr, device, epochs, seed=1000 * gi + sd)
+            ps = _probs(m, va, device)
+            priors.append(float((ps.argmax(1) == gold_va).mean()))
+            prob_s.append(ps); group.append(gi); names.append(f"{fam}-s{sd}")
+            for d, (te, gold) in targets.items():
+                pt = _probs(m, te, device)
+                acc[d]["pred"].append(pt.argmax(1)); acc[d]["prob_t"].append(pt)
+                if verbose:
+                    print(f"  {src}->{d} {fam}-s{sd}: src {priors[-1]:.3f}  "
+                          f"tgt {float((pt.argmax(1) == gold).mean()):.3f}", flush=True)
+            del m; torch.cuda.empty_cache()
+
+    ver = _train(_SmallCNN(), tr, device, epochs, seed=99)
+    out = {}
+    for d, (te, gold) in targets.items():
+        vg = _probs(ver, te, device, tta=4).argmax(1)
+        if verbose:
+            print(f"  {src}->{d} verifier: tgt {float((vg == gold).mean()):.3f}", flush=True)
+        out[d] = dict(pred=np.stack(acc[d]["pred"]), gold=gold, group=np.array(group),
+                      prior=np.array(priors), verifier_guess=vg, names=names,
+                      n_classes=10, prob_t=np.stack(acc[d]["prob_t"]),
+                      prob_s=np.stack(prob_s), src_gold_val=gold_va, src=src, dst=d)
+    del ver; torch.cuda.empty_cache()
+    return out
