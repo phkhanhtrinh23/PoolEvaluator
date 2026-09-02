@@ -494,12 +494,141 @@ imbalance, one-coin.
 
 ## 8. Why PoolEval under-spreads and DS over-spreads
 
-This is the single most important thing to understand before reading any MAE
-column in this document, because it explains a result that otherwise looks
-contradictory: **PoolEval wins MAE almost everywhere and loses ranking almost
-everywhere.**
+Every table above has two number columns that disagree with each other. PoolEval
+wins one almost everywhere and loses the other almost everywhere. This section
+explains why. It starts in plain language with no notation; the measurements come
+after.
 
-### The observation: MAE here *is* bias
+### 8.1 The whole problem, as a story
+
+Imagine a class of 15 students sits a test. **You have lost the answer key.** You
+still need to work out who did well.
+
+The only thing you can do is compare their papers. If ten students wrote "B" for
+question 3 and five wrote "C", "B" is probably right. So you build a *guessed
+answer key* out of what the class agreed on, and then you grade everyone against
+your guess.
+
+That is exactly what all the methods in this document do. The students are the
+models, the test is the unlabelled data, and the guessed answer key is what the
+code calls the *pseudo-label*.
+
+Two things now decide how well it works.
+
+**First: whose vote counts?** If you let every student vote equally, the weakest
+students help write the key — and the key inherits their mistakes. If you let
+only the strongest vote, the key is better, but you had to decide who is strong
+before you had a key, which is circular. The methods break that circle by going
+round in a loop: guess a key → grade everyone → give the good ones more voting
+power → guess a better key → repeat. That loop is EM.
+
+**Second, and this is the trap: what if the class is wrong together?** Suppose
+twelve of the fifteen students all made the *same* mistake on question 7. Your
+guessed key will contain that mistake, and all twelve get marked correct for it.
+Every one of them looks better than they are.
+
+That is why, in every single experiment in this document, **every method
+over-estimates every model.** It is not a bug in one estimator; it is what
+happens whenever you grade a class against its own consensus. The code calls it
+the *gauge trap*.
+
+### 8.2 Two words you need: "spread" and "offset"
+
+Say the true scores run from 30% to 75%.
+
+- The **spread** is how far apart the estimates are: highest estimate minus
+  lowest. True spread here is 45 points.
+- The **offset** (the code says *bias*) is how much too high everyone is on
+  average. If your estimates run 42% to 87%, the spread is still 45 but everyone
+  is 12 points too high — the offset is +12.
+
+Now the two things we measure:
+
+- **MAE** — on average, how far is each estimate from the truth. Small is good.
+- **Ranking** (Spearman's ρ) — did you put the students in the right *order*?
+  +1.0 means perfect order, 0 means random, negative means backwards. This is
+  what you need if the job is "pick the best model".
+
+Here is the key fact, and it is measured, not assumed: in these experiments
+**MAE and offset are the same number to four decimal places.** Every method is
+too high, so "how far off am I" is entirely "how much too high am I". MAE is
+measuring the offset and nothing else.
+
+### 8.3 Why one method's numbers are bunched up and the other's are stretched out
+
+Go back to the classroom.
+
+**PoolEval bunches the estimates together.** Two reasons:
+
+1. *It never lets a strong student out-vote a weak one by much.* Its voting
+   power is capped — the best student gets at most about 20× the say of the
+   worst. So weak students always have a real hand in writing the key. The key
+   ends up somewhere in the middle: too good to make the weak students look
+   terrible, too poor to make the strong students look excellent. **Everyone
+   drifts toward the middle.**
+
+2. *It pulls every score toward what the students scored on last term's test.*
+   That is the "prior" — accuracy measured on the source data. Averaging this
+   term's evidence with last term's marks is sensible when you have little
+   evidence, but if last term everyone scored 99%, you are averaging today's real
+   differences with a flat line, and the differences get flattened too.
+
+**Dawid–Skene stretches the estimates apart.** Two reasons, the mirror image:
+
+1. *It lets strong students dominate completely.* Its voting power is not capped
+   — the best can out-vote the worst by well over a thousand to one. It even
+   gives *negative* weight to a student scoring below random guessing, i.e. it
+   takes their answer as evidence the opposite is right. So the key is written by
+   the good students, and the gap between good and bad shows up in full.
+
+2. *The loop feeds on itself.* A student who is slightly above average gets a bit
+   more voting power → the key shifts toward their answers → they now agree with
+   the key more → their score goes up → they get more voting power again. Round
+   and round. Small real differences get amplified into big estimated ones.
+
+So: **PoolEval's estimates are too close together; DS's are too far apart.**
+
+### 8.4 Why that makes MAE the wrong thing to read
+
+If everyone's estimate is too high, then squashing all the estimates toward the
+middle drags them *down*, closer to the truth. So bunching up **lowers MAE** —
+not because you understood the students better, but because you hedged.
+
+The cost is that you also erased the differences between them. And the ordering
+is the thing you actually needed.
+
+Stretching apart does the opposite: it overshoots the level and looks worse on
+MAE, but it keeps — and sharpens — the order. In the measurements below you can
+watch DS's spread inflate past the truth *while its ranking gets better*. Being
+too spread out is a mistake about **how good** the models are. It is not a
+mistake about **which** model is better.
+
+### 8.5 The one thing to remember
+
+> **An offset is fixable. A wrong order is not.**
+
+If you can hand-label even a small sample, you can measure how much too high
+everyone is and subtract it — the offset disappears and the ranking is unharmed.
+There is no equivalent repair for an estimator that put the models in the wrong
+order; that information is simply gone.
+
+So:
+
+| you want to… | read | winner here |
+|---|---|---|
+| pick the best model | ranking (ρ) | **Dawid–Skene** |
+| report an accuracy number | MAE | nobody — all are +0.08 to +0.19 too high |
+
+PoolEval "winning MAE" means it hedged closest to the middle. It does not mean it
+understood the pool better.
+
+---
+
+### 8.6 The same thing, with the measurements
+
+The rest of this section is the evidence for the story above.
+
+#### MAE here *is* the offset
 
 Decomposing the scenario-4 numbers (fixed M=5):
 
@@ -523,7 +652,7 @@ whether an estimator can tell models apart. Remove the offset and PoolEval loses
 
 The remaining question is why the offsets differ, and the answer is spread.
 
-### Spread against the truth
+#### Spread against the truth
 
 | pool | true spread | PoolEval + anchor | PoolEval no anchor | DS one-coin | DS full |
 |---|---|---|---|---|---|
@@ -533,7 +662,7 @@ The remaining question is why the offsets differ, and the answer is spread.
 
 Three mechanisms produce this, and they can be measured separately.
 
-### Mechanism 1 — the vote-weight transform (compresses PoolEval)
+#### Mechanism 1 — the vote-weight transform: *whose vote counts*
 
 Both estimators aggregate votes; they weight them differently.
 
@@ -573,7 +702,7 @@ This is not an accident, and the code says so. From `pooleval/latent.py:61-66`:
 PoolEval **deliberately damps** the feedback loop that DS runs at full strength.
 The trade documented here is exactly the one that comment is making, measured.
 
-### Mechanism 2 — the anchor (pulls spread toward the *prior's* spread)
+#### Mechanism 2 — the anchor: *pulled toward last term's marks*
 
 The anchor fuses the data estimate with the source prior. It does not compress
 unconditionally — it pulls the estimated spread toward whatever spread the prior
@@ -608,7 +737,7 @@ recovers both the spread and the ranking every time:
 | graph D→A | +0.654 | **+0.814** |
 | svhn→mnist | +0.868 | **+0.982** |
 
-### Mechanism 3 — EM feedback (inflates DS)
+#### Mechanism 3 — EM feedback: *the loop feeding on itself*
 
 DS's over-spread is not present at initialisation; the EM loop builds it. A model
 slightly above average gets more weight, the consensus moves toward it, so it
@@ -633,7 +762,7 @@ settles above it. Same on svhn→mnist: 0.465 → 0.569 against a true 0.527.
 differences without reordering them. That is the crux — **over-spreading is a
 level error, not an ordering error.**
 
-### Why this decides which metric to trust
+#### Why this decides which metric to trust
 
 | | spread | MAE | ranking |
 |---|---|---|---|
