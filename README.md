@@ -412,12 +412,24 @@ full DS's grows as K^2). One result is exact rather than empirical: in a pool
 with one model per family, PoolEval's provenance discount is provably inert
 (`max|on-off| = 0`), so it degenerates to a weaker one-coin DS.
 
-A section on estimate SPREAD explains why the MAE and ranking columns disagree
-throughout: every estimator shares the same positive bias, so MAE only measures
-its size. PoolEval under-spreads (vote weight capped at a 19.8x ratio, plus
-shrinkage toward the source prior) and so wins MAE; DS over-spreads (log-odds
-weight, ratio ~1881x, amplified by EM feedback) and so wins ranking. Offsets are
-removable with one labelled anchor; orderings are not.
+Section 8 explains, in plain language first, why the MAE and ranking columns
+disagree throughout. The picture: a class sits a test and you have lost the
+answer key, so you rebuild the key from what the students agreed on and grade
+them against your guess. If the class was wrong together, the key inherits the
+mistake and everyone looks better than they are -- which is why every method here
+over-estimates every model, and why MAE ends up measuring only how much too high
+each method is.
+
+PoolEval caps how loudly a strong model can out-vote a weak one (about 20x) and
+averages every score toward source-domain accuracy, so its estimates bunch toward
+the middle. Bunching drags inflated estimates down, which wins MAE -- but it also
+erases the differences you need in order to rank. Dawid--Skene does the opposite:
+uncapped voting power (over 1000x, negative for below-chance models) and an EM
+loop that amplifies small differences, so its estimates spread too far apart --
+worse MAE, better ranking.
+
+The asymmetry that settles it: an offset is fixable (label a small sample and
+subtract it), a wrong ordering is not.
 
 ```bash
 python experiments/run_ds_assumption.py
