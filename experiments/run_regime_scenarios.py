@@ -139,6 +139,66 @@ def scenario_imbalance(pool_name, powers=(0.0, 1.5, 3.0, 5.0), n_fixed=800, reps
     return out
 
 
+def scenario_heterogeneous(pool_names, reps=3):
+    """Pool composition at FIXED M=5: one model per family vs near-clones.
+
+    PoolEval's only structural advantage over one-coin DS is the provenance
+    discount 1/(1 + u_g*(n_gk - 1)), which shrinks same-group models voting the
+    same class toward a single vote. With one model per family every group is a
+    singleton, n_gk == 1 always, and the discount is exactly 1 -- so it does
+    nothing. This checks that claim numerically and then measures the cost.
+    """
+    out = {}
+    for name in pool_names:
+        path = os.path.join(CACHE, name + ".npz")
+        if not os.path.exists(path):
+            continue
+        p = load(name)
+        pred, gold, grp = p["pred"], p["gold"], p["group"]
+        prior, vg, K = p["prior"], p["verifier_guess"], int(np.asarray(p["n_classes"]))
+        fams = sorted(set(grp.tolist()))
+        byfam = {g: np.where(grp == g)[0] for g in fams}
+        print(f"\n  {name}  (K={K}, {len(fams)} families x {len(byfam[fams[0]])} seeds, M held at 5)")
+
+        # Is the discount inert when every group is a singleton?
+        het = np.array([byfam[g][0] for g in fams])
+        hom = np.concatenate([byfam[fams[0]][:3], byfam[fams[1]][:2]])
+        for lbl, idx, gg in (("one per family", het, np.arange(len(fams))),
+                             ("3+2 clones", hom, np.array([0, 0, 0, 1, 1]))):
+            run = from_predictions(pred[idx], gold, gg, prior=prior[idx], verifier_guess=vg)
+            mk = lambda c: dataclasses.replace(Config(), real_data=True, M=run.M, N=run.N,
+                                               n_groups=run.n_groups, use_correlation=c)
+            on = PoolEval(mk(True)).evaluate(run, obs=run.true_class)["acc"]
+            off = PoolEval(mk(False)).evaluate(run, obs=run.true_class)["acc"]
+            d = float(np.abs(on - off).max())
+            print(f"    group discount, {lbl:16s}: max|on-off| = {d:.2e}"
+                  f"  -> {'INERT' if d < 1e-12 else 'ACTIVE'}")
+
+        print(_header("composition", "provenance groups"))
+        designs = {
+            "5 families x 1 seed": [(g, 0) for g in fams],
+            "3 families (2+2+1)": [(fams[0], 0), (fams[0], 1), (fams[1], 0),
+                                   (fams[1], 1), (fams[2], 0)],
+            "2 families (3+2)": [(fams[0], 0), (fams[0], 1), (fams[0], 2),
+                                 (fams[1], 0), (fams[1], 1)],
+        }
+        rows = {}
+        for label, spec in designs.items():
+            reps_d = []
+            for shift in range(reps):          # rotate which families fill each slot
+                idx, gg = [], []
+                for g, si in spec:
+                    g2 = fams[(fams.index(g) + shift) % len(fams)]
+                    idx.append(byfam[g2][si % len(byfam[g2])]); gg.append(g2)
+                _, gcomp = np.unique(np.array(gg), return_inverse=True)
+                reps_d.append(evaluate(pred[np.array(idx)], gold, gcomp,
+                                       prior[np.array(idx)], K, vg))
+            rows[label] = _mean(reps_d)
+            print(_row(label, len(set(g for g, _ in spec)), rows[label]))
+        out[name] = rows
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="results/regime_scenarios.json")
@@ -159,6 +219,12 @@ def main():
     print("SCENARIO 3 -- IMBALANCED classes (real pool, N fixed)")
     print("=" * 96)
     res["imbalance"] = {n: scenario_imbalance(n) for n in ("graph_AC", "vision_mnist_usps")}
+
+    print("\n" + "=" * 96)
+    print("SCENARIO 4 -- HETEROGENEOUS pool: one model per family (real pools, M fixed)")
+    print("=" * 96)
+    res["heterogeneous"] = scenario_heterogeneous(
+        ["graph_AC", "graph_DA", "vmat_svhn_mnist"])
 
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     json.dump(res, open(a.out, "w"), indent=2, default=float)

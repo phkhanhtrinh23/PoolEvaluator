@@ -404,6 +404,71 @@ fragment that way, so it is immune.
 The same pattern appears on vision (full DS +0.999 → +0.857, one-coin +0.989 →
 +0.899), though less sharply.
 
+### Scenario 4 — a heterogeneous pool (one model per family)
+
+This one has a clean theoretical answer, and the code confirms it exactly.
+
+PoolEval's *only* structural advantage over one-coin DS is the provenance
+discount
+
+```
+disc_m = 1 / (1 + u_g · (n_{g,k} − 1))
+```
+
+where `n_{g,k}` counts models of group `g` voting for class `k`. **If every model
+comes from a different family, every group is a singleton, so `n_{g,k} ≡ 1` and
+`disc_m ≡ 1`.** The discount multiplies by one. It does nothing.
+
+Verified directly — turning `use_correlation` on and off in a one-model-per-family
+pool:
+
+| pool | one per family | 3+2 near-clones |
+|---|---|---|
+| graph A→C | `max|on−off| = 0.00e+00` **inert** | 4.48e-02 active |
+| graph D→A | `0.00e+00` **inert** | 5.27e-02 active |
+| svhn→mnist | `0.00e+00` **inert** | 1.89e-02 active |
+
+Bit-for-bit identical. So in a fully heterogeneous pool PoolEval collapses to a
+weighted-vote approximation of one-coin DS — and a *worse* one, because its vote
+weight is `clip(α, 0.05, 0.99)` rather than the derived `log[α(K−1)/(1−α)]` (§3).
+
+Full DS, meanwhile, loses nothing and *gains*: its conditional-independence
+assumption is closest to true precisely when no two models share a backbone. The
+one violation it cannot represent is the one that just disappeared.
+
+Measured at fixed M=5, varying only composition (MAE / ρ):
+
+| pool | composition | PoolEval | DS one-coin | DS full |
+|---|---|---|---|---|
+| graph A→C | 5 families × 1 | 0.0929 / +0.300 | 0.1317 / +0.900 | 0.1237 / **+1.000** |
+| | 2 families (3+2) | 0.1409 / +0.367 | 0.1784 / +0.726 | 0.1736 / +0.726 |
+| graph D→A | 5 families × 1 | 0.1840 / +0.100 | 0.2202 / **+1.000** | 0.2075 / **+1.000** |
+| | 2 families (3+2) | 0.2159 / −0.233 | 0.2669 / +0.267 | 0.2607 / +0.200 |
+| svhn→mnist | 5 families × 1 | 0.0840 / +0.900 | 0.1155 / +0.900 | 0.1061 / +0.900 |
+| | 2 families (3+2) | 0.1243 / +0.367 | 0.1457 / +0.833 | 0.1409 / +0.967 |
+
+Two things to read off:
+
+- **Heterogeneity helps everyone.** Every method improves going from 2 families
+  to 5. Five independent witnesses beat five near-clones — which is a pool-design
+  lesson independent of estimator choice.
+- **It helps the DS variants most.** Their ranking goes to ρ = +0.90–1.00 in the
+  heterogeneous pools, while PoolEval's stays poor (+0.100 to +0.300 on graph).
+  PoolEval keeps an MAE edge, but that is bias-shaving again, not signal.
+
+**So: full DS wins, and by more than in a homogeneous pool.** A heterogeneous
+pool removes PoolEval's reason to exist and simultaneously repairs full DS's
+weakest assumption.
+
+The corollary is worth stating for pool design: if you can *choose* your pool,
+choose one model per family — it improves every estimator, and it means you no
+longer need the provenance machinery at all. The group discount is insurance
+against a pool you did not get to design.
+
+*(Caveat: with M=5, Spearman is computed on five points and is therefore coarse —
++0.100 and +0.300 differ by one swap. The MAE column and the inertness check are
+the solid parts.)*
+
 ### Summary
 
 | regime | use | why |
@@ -412,6 +477,7 @@ The same pattern appears on vision (full DS +0.999 → +0.857, one-coin +0.989 �
 | large K | **one-coin** (or PoolEval) | full DS is O(K²) parameters; data is O(N) |
 | imbalanced classes | **one-coin** | starved rare-class rows drive the E-step everywhere |
 | large N, small K, balanced | **full DS** | it can afford the parameters, and non-uniform errors are real |
+| heterogeneous pool (1 per family) | **full DS** | PoolEval's group discount is provably inert; DS's independence assumption becomes true |
 
 **Two caveats.** First, PoolEval's *baseline* ranking on these pools is lower to
 begin with (ρ +0.74 vs +0.93 balanced), so "robust to imbalance" partly means
