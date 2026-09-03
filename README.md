@@ -444,32 +444,110 @@ experiments, written for a reader who has seen none of the above. They were
 chosen to span one axis -- how many possible answers a task has -- because that
 number turns out to decide almost everything.
 
-| task | question | K | best MAE |
-|---|---|---|---|
-| link prediction | "is there an edge here?" | 2 | DoC 0.0523 |
-| image captioning | "describe this image" | unbounded | B4 0.0108 |
-| KGC, FB15k-237 | "(head, relation, ?)" | 14,541 | B1 0.0071 |
-| KGC, WN18RR | same | 40,943 | B1 0.0046 |
+All results below are MAE against the withheld true accuracy (lower is better);
+`rho` is Spearman rank correlation (does it order the models correctly). The best
+row and every PoolEval variant are in bold.
+
+### Link prediction (K = 2, mean over 6 cross-graph transfers)
+
+| method | MAE | rho |
+|---|---|---|
+| **DoC** | **0.0523** | +0.002 |
+| B1 Independent | 0.1241 | +0.148 |
+| B4 Agreement-on-line | 0.1241 | +0.579 |
+| DS full (confusion) | 0.1466 | +0.602 |
+| ATC-MC | 0.1814 | -0.269 |
+| ATC-NE | 0.1814 | -0.269 |
+| DS one-coin (exact) | 0.1983 | -0.636 |
+| **PoolEval** | **0.2045** | -0.329 |
+| **PoolEval (learned verif.)** | **0.2073** | -0.583 |
+| B3 Dawid--Skene | 0.2074 | -0.593 |
+| **PoolEval (no anchors)** | **0.2074** | -0.593 |
+| B2 Majority/self-cons. | 0.2084 | -0.582 |
+| NF collision (g=null) | 0.2292 | -0.329 |
+| NF collision (g=source) | 0.2292 | -0.329 |
+| NF collision (g=oracle) | 0.2399 | -0.329 |
+| NF binary EM (g=1) | 0.2780 | -0.330 |
+
+`DS full` is applicable here (2x2 matrix) and gives the best ranking of any
+consensus method, rho +0.602, where every other one ranks *backwards*.
+
+### Image captioning (K unbounded, mean over 4 kernel thresholds)
+
+| method | MAE | rho |
+|---|---|---|
+| **B4 Agreement-on-line** | **0.0108** | +0.998 |
+| B1 Independent | 0.0158 | +0.981 |
+| **PoolEval** | **0.0303** | +0.995 |
+| **PoolEval (learned verif.)** | **0.0347** | +0.998 |
+| DS one-coin (exact) | 0.0362 | +0.987 |
+| **PoolEval (no anchors)** | **0.0381** | +0.996 |
+| B2 Majority/self-cons. | 0.0393 | +1.000 |
+| B3 Dawid--Skene | 0.0394 | +0.998 |
+| NF collision (g=source) | 0.0480 | +0.995 |
+| NF collision (g=oracle) | 0.0493 | +0.995 |
+| NF collision (g=null) | 0.0538 | +0.995 |
+| NF binary EM (g=1) | 0.0656 | +0.995 |
+
+`DS full` is **omitted: not well posed** -- caption clusters are numbered per
+image, so a confusion matrix has nothing stable to estimate. `DoC`/`ATC` need
+per-item softmaxes, which this task does not provide.
+
+### KG completion -- FB15k-237 (K = 14,541)
+
+| method | MAE | rho |
+|---|---|---|
+| **B1 Independent** | **0.0071** | +0.979 |
+| B4 Agreement-on-line | 0.0243 | +0.797 |
+| **PoolEval (learned verif.)** | **0.0500** | +0.951 |
+| **PoolEval** | **0.0792** | +0.930 |
+| B3 Dawid--Skene | 0.0837 | +0.916 |
+| **PoolEval (no anchors)** | **0.0850** | +0.916 |
+| NF collision (g=null) | 0.0912 | +0.930 |
+| NF binary EM (g=1) | 0.1185 | +0.930 |
+| DS one-coin (exact) | 0.1331 | +0.979 |
+| B2 Majority/self-cons. | 0.1364 | +0.918 |
+| NF collision (g=oracle) | 0.3361 | +0.469 |
+| NF collision (g=source) | 0.3699 | +0.469 |
+
+`DS full` is **omitted: infeasible** -- 18.9 GB, 211,426,140 parameters per model.
+
+### KG completion -- WN18RR (K = 40,943)
+
+| method | MAE | rho |
+|---|---|---|
+| **B1 Independent** | **0.0046** | +0.988 |
+| **PoolEval (learned verif.)** | **0.0671** | +0.988 |
+| **PoolEval (no anchors)** | **0.0672** | +0.988 |
+| **PoolEval** | **0.0790** | +0.771 |
+| B4 Agreement-on-line | 0.0811 | +0.403 |
+| NF collision (g=oracle) | 0.1192 | +0.949 |
+| DS one-coin (exact) | 0.1193 | +0.403 |
+| B2 Majority/self-cons. | 0.1210 | +0.403 |
+| NF binary EM (g=1) | 0.1252 | +0.771 |
+| NF collision (g=source) | 0.1301 | +0.771 |
+| NF collision (g=null) | 0.1408 | +0.771 |
+| B3 Dawid--Skene | 0.1806 | +0.395 |
+
+`DS full` is **omitted: infeasible** -- 149.9 GB, 1,676,288,306 parameters per model.
 
 **Can full Dawid--Skene be used? Only on link prediction -- one task in four**,
 and the three failures have two different causes. On knowledge-graph completion
-it is *infeasible*: a K x K confusion matrix per model is 18.9 GB at K=14541 and
-149.9 GB at K=40943 (1.68 billion parameters per model), so the code refuses with
-that arithmetic. On captioning it is *meaningless*, which is worse: caption
-clusters are numbered per image, so "class 2" names a different thing on every
-item and there is no quantity for the matrix to estimate. That one is dangerous
-because the code will still return a plausible-looking number -- permuting the
-order the models are listed in changes full DS's answer by 1.8x on identical
-data, while one-coin DS (which only tests ids for equality) barely moves.
+it is *infeasible*. On captioning it is *meaningless*, which is worse: the code
+still returns a plausible number, but permuting the order the models are listed
+in changes it by 1.8x on identical data (0.0243 vs 0.0435), because cluster ids
+are arbitrary. One-coin DS, which only tests ids for equality, moves by 0.004.
 
-The collision correction of `Trinh_proof.tex` behaves exactly as its own theory
-predicts across the range: at K=2 two wrong answers must coincide, so gamma is
-forced to 1 (measured: 0.999) and the correction is provably vacuous -- the
-gamma=null and gamma=source rows are identical to four decimals. On captioning,
-the unbounded-answer-space regime it was designed for, measuring gamma improves
-MAE monotonically over both extremes (gamma=1 0.0656 -> null 0.0538 -> measured
-0.0480). The measured collision rate exceeds the independent-error rate by 1x,
-5-6x, 2058x and 3683x across the four tasks.
+The collision correction of `Trinh_proof.tex` tracks its own theory across the
+range. At K=2 two wrong answers must coincide, so gamma is forced to 1 (measured
+0.999) and the correction is provably vacuous -- gamma=null and gamma=source are
+identical to four decimals. On captioning, the unbounded regime it was written
+for, measuring gamma beats both extremes monotonically (gamma=1 0.0656 -> null
+0.0538 -> measured 0.0480). Measured collision rate over the independent-error
+rate across the four tasks: 1x, 5-6x, 2058x, 3683x.
+
+Full analysis, written for a reader who has seen none of the above, is in
+[`docs/four_more_tasks.md`](docs/four_more_tasks.md).
 
 ```bash
 python experiments/run_domain_linkpred.py

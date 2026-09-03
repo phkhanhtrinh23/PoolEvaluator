@@ -41,11 +41,31 @@ accuracy for exactly this reason. It has a name in this repo: the *gauge trap*.
 |---|---|
 | **B1 Independent** | ignore the pool entirely; predict the accuracy the model had on labelled source data. A "no consensus" control. |
 | **B2 Majority** | plain majority vote builds the key; grade against it. |
-| **B3 / DS one-coin** | Dawid–Skene: like majority vote, but better models get more voting power, learned by EM. Each model gets **one number** (its accuracy). |
+| **B3 Dawid–Skene** | the repo's *original* DS baseline. Not textbook DS — it is `pooleval/latent.py` with the prior, verifier and provenance discount switched off, so the comparison isolates this repo's contributions. Its vote weight is `clip(α, 0.05, 0.99)` and its M-step is a hard argmax. |
+| **DS one-coin (exact)** | textbook Dawid–Skene, added for this note: vote weight `log[α(K−1)/(1−α)]`, closed-form M-step. See the note below on why both are reported. |
 | **DS full** | Dawid–Skene with a whole **confusion matrix** per model — it can learn "this model mistakes 4 for 9" rather than assuming errors are spread evenly. |
 | **PoolEval** | this repo's estimator: DS-style voting plus a *provenance discount* (models from the same family are treated as fewer independent votes) plus an *anchor* toward source accuracy. |
 | **NF binary / NF collision** | the formulation from `Trinh_proof.tex`: collapse the pool to "agrees with the key / doesn't", then model the chance two wrong answers coincide with a parameter γ. |
 | **DoC / ATC** | ignore the pool; predict accuracy from how *confident* each model is. |
+
+> **Why both B3 and DS one-coin?** They are nominally the same method but are
+> genuinely different estimators, and the gap is not small:
+>
+> | task | B3 (ablated PoolEval) | DS one-coin (textbook) | \|diff\| |
+> |---|---|---|---|
+> | Link prediction | 0.2074 | 0.1983 | 0.0091 |
+> | Captioning | 0.0394 | 0.0362 | 0.0031 |
+> | FB15k-237 | 0.0837 | 0.1331 | **0.0494** |
+> | WN18RR | 0.1806 | 0.1193 | **0.0612** |
+>
+> B3 predates this work: it was built as an *ablation* of PoolEval so that "our
+> method minus our contributions" is the comparison, which is the right design for
+> attributing a gain. But it means B3 is not the Dawid–Skene estimator from the
+> literature — it inherits PoolEval's bounded vote weight and hard-argmax M-step.
+> `DS one-coin (exact)` was added so the literature baseline is actually present.
+> Where they disagree most (large K), the textbook version ranks better and the
+> ablation has lower MAE — the spread/offset trade of
+> [`multiclass_ds.md`](multiclass_ds.md) §8 again.
 
 ### The two numbers reported
 
@@ -89,7 +109,7 @@ Positives and sampled negatives in equal numbers, so chance accuracy is 0.50.
 | **DS full (confusion)** | 0.1466 | **+0.602** |
 | ATC-MC / ATC-NE | 0.1814 | −0.269 |
 | DS one-coin | 0.1983 | −0.636 |
-| PoolEval | 0.2045 | −0.329 |
+| **PoolEval** | **0.2045** | −0.329 |
 | B3 Dawid–Skene | 0.2074 | −0.593 |
 | B2 Majority | 0.2084 | −0.582 |
 | NF collision (γ=null) | 0.2292 | −0.329 |
@@ -156,10 +176,10 @@ The threshold is a strictness dial, so everything is reported at four settings
 |---|---|---|
 | B4 Agreement-on-line | **0.0108** | +0.998 |
 | B1 Independent | 0.0158 | +0.981 |
-| PoolEval | 0.0303 | +0.995 |
-| PoolEval (learned verif.) | 0.0347 | +0.998 |
+| **PoolEval** | **0.0303** | +0.995 |
+| **PoolEval (learned verif.)** | **0.0347** | +0.998 |
 | DS one-coin | 0.0362 | +0.987 |
-| PoolEval (no anchors) | 0.0381 | +0.996 |
+| **PoolEval (no anchors)** | **0.0381** | +0.996 |
 | B2 Majority | 0.0393 | **+1.000** |
 | B3 Dawid–Skene | 0.0394 | +0.998 |
 | **NF collision (γ=source)** | **0.0480** | +0.995 |
@@ -219,10 +239,10 @@ functions — × 3 seeds = 12 models. Prior from the labelled validation split.
 |---|---|---|
 | B1 Independent | **0.0071** | +0.979 |
 | B4 Agreement-on-line | 0.0243 | +0.797 |
-| PoolEval (learned verif.) | 0.0500 | +0.951 |
-| PoolEval | 0.0792 | +0.930 |
+| **PoolEval (learned verif.)** | **0.0500** | +0.951 |
+| **PoolEval** | **0.0792** | +0.930 |
 | B3 Dawid–Skene | 0.0837 | +0.916 |
-| PoolEval (no anchors) | 0.0850 | +0.916 |
+| **PoolEval (no anchors)** | **0.0850** | +0.916 |
 | NF collision (γ=null) | 0.0912 | +0.930 |
 | NF binary EM (γ=1) | 0.1185 | +0.930 |
 | DS one-coin | 0.1331 | +0.979 |
@@ -236,9 +256,9 @@ functions — × 3 seeds = 12 models. Prior from the labelled validation split.
 | method | MAE | ρ |
 |---|---|---|
 | B1 Independent | **0.0046** | +0.988 |
-| PoolEval (learned verif.) | 0.0671 | +0.988 |
-| PoolEval (no anchors) | 0.0672 | +0.988 |
-| PoolEval | 0.0790 | +0.771 |
+| **PoolEval (learned verif.)** | **0.0671** | +0.988 |
+| **PoolEval (no anchors)** | **0.0672** | +0.988 |
+| **PoolEval** | **0.0790** | +0.771 |
 | B4 Agreement-on-line | 0.0811 | +0.403 |
 | NF collision (γ=oracle) | 0.1192 | +0.949 |
 | DS one-coin | 0.1193 | +0.403 |
