@@ -67,6 +67,60 @@ accuracy for exactly this reason. It has a name in this repo: the *gauge trap*.
 > ablation has lower MAE — the spread/offset trade of
 > [`multiclass_ds.md`](multiclass_ds.md) §8 again.
 
+### `PoolEval` vs `PoolEval (learned verif.)`
+
+Both rows appear in every table below. They use the same outside helper — the
+**verifier** — and differ only in *how much it is trusted*.
+
+Back to the classroom. The verifier is an **outside expert** who also sits the
+test. They are not one of the students.
+
+- **`PoolEval` (fixed)** — you decide *in advance* that the expert's answer counts
+  as **2 votes**. Always. Even if the expert turns out to be terrible. Students
+  get at most 1 vote each, so the expert outvotes any two students, every time.
+  (`latent.py:115`, `score[vg] += cfg.verifier_strength`, a constant of 2.0.)
+- **`PoolEval (learned verif.)`** — you treat the expert as just another student.
+  The algorithm watches how often they agree with the emerging answer key and
+  works out their vote weight from the data.
+
+**Example — WN18RR.** The verifier there is right **1.8 %** of the time. Useless.
+
+| | vote weight it gets |
+|---|---|
+| fixed | **2.0** — dominates everyone |
+| learned | **0.02** — correctly ignored |
+
+That is why learned wins on that task: MAE 0.0790 → **0.0671**.
+
+**But it can be fooled.** On FB15k-237 the verifier is right 17 % of the time and
+learned gives it **0.98** — almost full trust. The algorithm can only ask *"does
+the expert agree with our guessed answer key?"*, never *"is the expert right?"*.
+That verifier agrees with the pool's shared mistakes, so it looks brilliant.
+
+What it learns, measured against the truth:
+
+| task | verifier's true accuracy | learned weight |
+|---|---|---|
+| captioning | 0.987 | 0.980 ✅ |
+| WN18RR | 0.018 | 0.020 ✅ |
+| graph A→C | 0.645 | 0.861 |
+| link D→C | 0.594 | 0.167 |
+| FB15k-237 | 0.173 | 0.980 ❌ |
+
+**One line:** fixed = trust set by hand; learned = trust measured from agreement —
+better when the pool is honest, fooled when the pool is wrong together.
+
+Effect on MAE across the four tasks:
+
+| task | fixed | learned |
+|---|---|---|
+| Link prediction | **0.2045** | 0.2073 |
+| Captioning | **0.0303** | 0.0347 |
+| FB15k-237 | 0.0792 | **0.0500** |
+| WN18RR | 0.0790 | **0.0671** |
+
+The default stays `"fixed"` so the published Text2SQL numbers reproduce unchanged.
+
 ### The two numbers reported
 
 - **MAE** — average distance between estimated and true accuracy. Lower is better.
