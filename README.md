@@ -444,6 +444,26 @@ experiments, written for a reader who has seen none of the above. They were
 chosen to span one axis -- how many possible answers a task has -- because that
 number turns out to decide almost everything.
 
+**`PoolEval` vs `PoolEval (learned verif.)`.** Both use the same outside helper,
+the *verifier*, and differ only in how much it is trusted. Think of the verifier
+as an outside expert who also sits the test, and is not one of the students.
+`PoolEval` decides in advance that the expert's answer counts as 2 votes, always,
+however good or bad they turn out to be -- students get at most 1 vote each, so
+the expert always outvotes any two of them. `PoolEval (learned verif.)` instead
+treats the expert as one more student and works out their vote weight from the
+data.
+
+On WN18RR the verifier is right 1.8% of the time. Fixed still gives it a weight of
+2.0; learned measures 0.02 and correctly ignores it, which is why learned wins
+there (0.0790 -> 0.0671). But it can be fooled: on FB15k-237 the verifier is right
+17% of the time and learned gives it 0.98, because the algorithm can only ask
+"does the expert agree with our guessed answer key?", never "is the expert right?"
+-- and that verifier agrees with the pool's shared mistakes.
+
+In one line: fixed = trust set by hand, learned = trust measured from agreement;
+better when the pool is honest, fooled when the pool is wrong together. The
+default stays "fixed" so the published Text2SQL numbers reproduce unchanged.
+
 All results below are MAE against the withheld true accuracy (lower is better);
 `rho` is Spearman rank correlation (does it order the models correctly). The best
 row and every PoolEval variant are in bold.
