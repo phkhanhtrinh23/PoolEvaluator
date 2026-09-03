@@ -77,7 +77,10 @@ def gamma_from_run(run, pseudo, smoothing=1.0):
 
 def source_gamma(pool, cfg, smoothing=1.0):
     """gamma_g and beta measured on the SOURCE validation split (no target labels)."""
-    pred_s = np.asarray(pool["prob_s"]).argmax(-1)
+    if pool.get("pred_s") is not None:
+        pred_s = np.asarray(pool["pred_s"])          # task stores predictions directly
+    else:
+        pred_s = np.asarray(pool["prob_s"]).argmax(-1)
     run_s = from_predictions(pred_s, np.asarray(pool["src_gold_val"]),
                              np.asarray(pool["group"]), prior=np.asarray(pool["prior"]))
     cfg_s = _resize(cfg, run_s)

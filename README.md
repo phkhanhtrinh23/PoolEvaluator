@@ -437,6 +437,46 @@ python experiments/run_regime_scenarios.py
 python experiments/run_gamma_ablation.py
 ```
 
+### Four more tasks: link prediction, captioning, knowledge-graph completion
+
+[`docs/four_more_tasks.md`](docs/four_more_tasks.md) reports four further
+experiments, written for a reader who has seen none of the above. They were
+chosen to span one axis -- how many possible answers a task has -- because that
+number turns out to decide almost everything.
+
+| task | question | K | best MAE |
+|---|---|---|---|
+| link prediction | "is there an edge here?" | 2 | DoC 0.0523 |
+| image captioning | "describe this image" | unbounded | B4 0.0108 |
+| KGC, FB15k-237 | "(head, relation, ?)" | 14,541 | B1 0.0071 |
+| KGC, WN18RR | same | 40,943 | B1 0.0046 |
+
+**Can full Dawid--Skene be used? Only on link prediction -- one task in four**,
+and the three failures have two different causes. On knowledge-graph completion
+it is *infeasible*: a K x K confusion matrix per model is 18.9 GB at K=14541 and
+149.9 GB at K=40943 (1.68 billion parameters per model), so the code refuses with
+that arithmetic. On captioning it is *meaningless*, which is worse: caption
+clusters are numbered per image, so "class 2" names a different thing on every
+item and there is no quantity for the matrix to estimate. That one is dangerous
+because the code will still return a plausible-looking number -- permuting the
+order the models are listed in changes full DS's answer by 1.8x on identical
+data, while one-coin DS (which only tests ids for equality) barely moves.
+
+The collision correction of `Trinh_proof.tex` behaves exactly as its own theory
+predicts across the range: at K=2 two wrong answers must coincide, so gamma is
+forced to 1 (measured: 0.999) and the correction is provably vacuous -- the
+gamma=null and gamma=source rows are identical to four decimals. On captioning,
+the unbounded-answer-space regime it was designed for, measuring gamma improves
+MAE monotonically over both extremes (gamma=1 0.0656 -> null 0.0538 -> measured
+0.0480). The measured collision rate exceeds the independent-error rate by 1x,
+5-6x, 2058x and 3683x across the four tasks.
+
+```bash
+python experiments/run_domain_linkpred.py
+python experiments/run_domain_caption.py
+python experiments/run_domain_kgc.py
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
