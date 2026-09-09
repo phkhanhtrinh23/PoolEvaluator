@@ -137,8 +137,12 @@ advantage is one target.
 | spider2local | 0.861 | 0.333 | yes | 2.6× |
 
 **50 of 50 model×target pairs satisfy the bound** — the way "accuracy ≤ 1" satisfies
-it. The Lipschitz constant that would make the bound *bind* is 0.000–0.062 against
-`L̂ = 0.361`: an order of magnitude of slack.
+it. The bound is 2.0–9.4× the real error (median 2.6×), and the Lipschitz constant
+that would make it *bind* is 0.000–0.062 against `L̂ = 0.361` — 6× too small or worse.
+
+The sharper criticism is not that the bound is loose but that it is **vacuous**.
+Accuracy already lives in `[0, 1]`, so a promise of "within 0.765" is a promise that
+accuracy is somewhere between 0 and 1. It rules nothing out.
 
 ## 5.2 Coverage is the binding constraint, not sample size
 
@@ -274,9 +278,11 @@ the two terms swap roles: out of distribution the transfer term dominates (0.45�
 
 **State as a limitation.**
 
-The bound holds on 50/50 pairs and is loose by roughly an order of magnitude, because
-`c = 0.57` puts the transfer term at 0.45–0.48 on its own. Reaching a useful `B ≤ 0.2`
-needs `c > 0.923`. The smoothness assumption it rests on cannot be tested on this
+The bound holds on 50/50 pairs and is 2.0–9.4× the real error, which makes it vacuous
+rather than merely loose: it promises "within 0.75–0.87" about a quantity that already
+lives in `[0, 1]`. The cause is entirely the transfer term, which `c = 0.57` puts at
+0.45–0.48 before the sampling term is even added. Reaching a useful `B ≤ 0.2` needs
+`c > 0.923`; `B ≤ 0.3` needs `c > 0.827`. The smoothness assumption it rests on cannot be tested on this
 corpus at all, because every probe item is nearly orthogonal to every target item.
 That is a statement about the SynSQL retrieval corpus, not about the theorem — §5.8
 shows the bound behaves exactly as the theory predicts once coverage is real.
