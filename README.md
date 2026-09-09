@@ -398,6 +398,183 @@ python experiments/run_domain_vision.py
 python experiments/run_domain_diagnostics.py --kind graph
 ```
 
+[`docs/multiclass_ds.md`](docs/multiclass_ds.md) works through what the right
+estimator is once the answer space is a closed set of K classes: why the
+collision rate `gamma` is not needed there, the closed-form multiclass EM, a
+measurement showing Dawid--Skene's uniform-error assumption is violated by
+1.9x-6.4x on real pools, and the confusion-matrix fix that turns MNIST -> SVHN
+from a total failure (rho -0.886) into a solved case (rho +0.829).
+
+It also reports which estimator wins in which regime -- small target set, many
+classes, imbalanced classes, heterogeneous pool -- with the crossover set by
+observations per free parameter (PoolEval's parameter count is independent of K;
+full DS's grows as K^2). One result is exact rather than empirical: in a pool
+with one model per family, PoolEval's provenance discount is provably inert
+(`max|on-off| = 0`), so it degenerates to a weaker one-coin DS.
+
+Section 8 explains, in plain language first, why the MAE and ranking columns
+disagree throughout. The picture: a class sits a test and you have lost the
+answer key, so you rebuild the key from what the students agreed on and grade
+them against your guess. If the class was wrong together, the key inherits the
+mistake and everyone looks better than they are -- which is why every method here
+over-estimates every model, and why MAE ends up measuring only how much too high
+each method is.
+
+PoolEval caps how loudly a strong model can out-vote a weak one (about 20x) and
+averages every score toward source-domain accuracy, so its estimates bunch toward
+the middle. Bunching drags inflated estimates down, which wins MAE -- but it also
+erases the differences you need in order to rank. Dawid--Skene does the opposite:
+uncapped voting power (over 1000x, negative for below-chance models) and an EM
+loop that amplifies small differences, so its estimates spread too far apart --
+worse MAE, better ranking.
+
+The asymmetry that settles it: an offset is fixable (label a small sample and
+subtract it), a wrong ordering is not.
+
+```bash
+python experiments/run_ds_assumption.py
+python experiments/run_regime_scenarios.py
+python experiments/run_gamma_ablation.py
+```
+
+### Four more tasks: link prediction, captioning, knowledge-graph completion
+
+[`docs/four_more_tasks.md`](docs/four_more_tasks.md) reports four further
+experiments, written for a reader who has seen none of the above. They were
+chosen to span one axis -- how many possible answers a task has -- because that
+number turns out to decide almost everything.
+
+**`PoolEval` vs `PoolEval (learned verif.)`.** Both use the same outside helper,
+the *verifier*, and differ only in how much it is trusted. Think of the verifier
+as an outside expert who also sits the test, and is not one of the students.
+`PoolEval` decides in advance that the expert's answer counts as 2 votes, always,
+however good or bad they turn out to be -- students get at most 1 vote each, so
+the expert always outvotes any two of them. `PoolEval (learned verif.)` instead
+treats the expert as one more student and works out their vote weight from the
+data.
+
+On WN18RR the verifier is right 1.8% of the time. Fixed still gives it a weight of
+2.0; learned measures 0.02 and correctly ignores it, which is why learned wins
+there (0.0790 -> 0.0671). But it can be fooled: on FB15k-237 the verifier is right
+17% of the time and learned gives it 0.98, because the algorithm can only ask
+"does the expert agree with our guessed answer key?", never "is the expert right?"
+-- and that verifier agrees with the pool's shared mistakes.
+
+In one line: fixed = trust set by hand, learned = trust measured from agreement;
+better when the pool is honest, fooled when the pool is wrong together. The
+default stays "fixed" so the published Text2SQL numbers reproduce unchanged.
+
+All results below are MAE against the withheld true accuracy (lower is better);
+`rho` is Spearman rank correlation (does it order the models correctly). The best
+row and every PoolEval variant are in bold.
+
+### Link prediction (K = 2, mean over 6 cross-graph transfers)
+
+| method | MAE | rho |
+|---|---|---|
+| **DoC** | **0.0523** | +0.002 |
+| B1 Independent | 0.1241 | +0.148 |
+| B4 Agreement-on-line | 0.1241 | +0.579 |
+| DS full (confusion) | 0.1466 | +0.602 |
+| ATC-MC | 0.1814 | -0.269 |
+| ATC-NE | 0.1814 | -0.269 |
+| DS one-coin (exact) | 0.1983 | -0.636 |
+| **PoolEval** | **0.2045** | -0.329 |
+| **PoolEval (learned verif.)** | **0.2073** | -0.583 |
+| B3 Dawid--Skene | 0.2074 | -0.593 |
+| **PoolEval (no anchors)** | **0.2074** | -0.593 |
+| B2 Majority/self-cons. | 0.2084 | -0.582 |
+| NF collision (g=null) | 0.2292 | -0.329 |
+| NF collision (g=source) | 0.2292 | -0.329 |
+| NF collision (g=oracle) | 0.2399 | -0.329 |
+| NF binary EM (g=1) | 0.2780 | -0.330 |
+
+`DS full` is applicable here (2x2 matrix) and gives the best ranking of any
+consensus method, rho +0.602, where every other one ranks *backwards*.
+
+### Image captioning (K unbounded, mean over 4 kernel thresholds)
+
+| method | MAE | rho |
+|---|---|---|
+| **B4 Agreement-on-line** | **0.0108** | +0.998 |
+| B1 Independent | 0.0158 | +0.981 |
+| **PoolEval** | **0.0303** | +0.995 |
+| **PoolEval (learned verif.)** | **0.0347** | +0.998 |
+| DS one-coin (exact) | 0.0362 | +0.987 |
+| **PoolEval (no anchors)** | **0.0381** | +0.996 |
+| B2 Majority/self-cons. | 0.0393 | +1.000 |
+| B3 Dawid--Skene | 0.0394 | +0.998 |
+| NF collision (g=source) | 0.0480 | +0.995 |
+| NF collision (g=oracle) | 0.0493 | +0.995 |
+| NF collision (g=null) | 0.0538 | +0.995 |
+| NF binary EM (g=1) | 0.0656 | +0.995 |
+
+`DS full` is **omitted: not well posed** -- caption clusters are numbered per
+image, so a confusion matrix has nothing stable to estimate. `DoC`/`ATC` need
+per-item softmaxes, which this task does not provide.
+
+### KG completion -- FB15k-237 (K = 14,541)
+
+| method | MAE | rho |
+|---|---|---|
+| **B1 Independent** | **0.0071** | +0.979 |
+| B4 Agreement-on-line | 0.0243 | +0.797 |
+| **PoolEval (learned verif.)** | **0.0500** | +0.951 |
+| **PoolEval** | **0.0792** | +0.930 |
+| B3 Dawid--Skene | 0.0837 | +0.916 |
+| **PoolEval (no anchors)** | **0.0850** | +0.916 |
+| NF collision (g=null) | 0.0912 | +0.930 |
+| NF binary EM (g=1) | 0.1185 | +0.930 |
+| DS one-coin (exact) | 0.1331 | +0.979 |
+| B2 Majority/self-cons. | 0.1364 | +0.918 |
+| NF collision (g=oracle) | 0.3361 | +0.469 |
+| NF collision (g=source) | 0.3699 | +0.469 |
+
+`DS full` is **omitted: infeasible** -- 18.9 GB, 211,426,140 parameters per model.
+
+### KG completion -- WN18RR (K = 40,943)
+
+| method | MAE | rho |
+|---|---|---|
+| **B1 Independent** | **0.0046** | +0.988 |
+| **PoolEval (learned verif.)** | **0.0671** | +0.988 |
+| **PoolEval (no anchors)** | **0.0672** | +0.988 |
+| **PoolEval** | **0.0790** | +0.771 |
+| B4 Agreement-on-line | 0.0811 | +0.403 |
+| NF collision (g=oracle) | 0.1192 | +0.949 |
+| DS one-coin (exact) | 0.1193 | +0.403 |
+| B2 Majority/self-cons. | 0.1210 | +0.403 |
+| NF binary EM (g=1) | 0.1252 | +0.771 |
+| NF collision (g=source) | 0.1301 | +0.771 |
+| NF collision (g=null) | 0.1408 | +0.771 |
+| B3 Dawid--Skene | 0.1806 | +0.395 |
+
+`DS full` is **omitted: infeasible** -- 149.9 GB, 1,676,288,306 parameters per model.
+
+**Can full Dawid--Skene be used? Only on link prediction -- one task in four**,
+and the three failures have two different causes. On knowledge-graph completion
+it is *infeasible*. On captioning it is *meaningless*, which is worse: the code
+still returns a plausible number, but permuting the order the models are listed
+in changes it by 1.8x on identical data (0.0243 vs 0.0435), because cluster ids
+are arbitrary. One-coin DS, which only tests ids for equality, moves by 0.004.
+
+The collision correction of `Trinh_proof.tex` tracks its own theory across the
+range. At K=2 two wrong answers must coincide, so gamma is forced to 1 (measured
+0.999) and the correction is provably vacuous -- gamma=null and gamma=source are
+identical to four decimals. On captioning, the unbounded regime it was written
+for, measuring gamma beats both extremes monotonically (gamma=1 0.0656 -> null
+0.0538 -> measured 0.0480). Measured collision rate over the independent-error
+rate across the four tasks: 1x, 5-6x, 2058x, 3683x.
+
+Full analysis, written for a reader who has seen none of the above, is in
+[`docs/four_more_tasks.md`](docs/four_more_tasks.md).
+
+```bash
+python experiments/run_domain_linkpred.py
+python experiments/run_domain_caption.py
+python experiments/run_domain_kgc.py
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

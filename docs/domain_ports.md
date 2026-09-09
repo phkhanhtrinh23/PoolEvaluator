@@ -71,14 +71,21 @@ PoolEval                  0.2420  +0.0002  -0.746
 B1 Independent            0.2918  +0.2918  -0.403
 ```
 
-MNIST → SVHN is reported in the JSON but is a **degenerate regime**: true target
-accuracy is 0.062–0.355 with K = 10, so most of the pool is *below chance*. Every
-label-free method fails there with bias between +0.46 and +0.85 and negative rank
-correlation. This is not a tuning problem — it is the Dawid–Skene identifiability
-theorem. The likelihood is invariant under flipping the latent labels and
-replacing each `a_m` with its complement, so "the crowd is accurate" and "the
-crowd is anti-accurate" fit the data equally well; only the assumption that
-annotators beat chance breaks the tie, and here that assumption is false.
+MNIST → SVHN is a **degenerate regime**: true target accuracy is 0.062–0.355
+with K = 10, so most of the pool is *below chance*. Every method listed above
+fails there, with bias between +0.46 and +0.85 and negative rank correlation.
+
+> **Correction (later work).** An earlier version of this document attributed
+> that failure to the Dawid–Skene identifiability theorem and called it
+> unsalvageable. That was too strong. It is a *uniform-error* failure, not an
+> identifiability failure: under this shift six models collapse to emitting one
+> class for 96–98% of items, and one-coin DS reads their mutual agreement as
+> accuracy (scoring them 0.96–0.98 against a true 0.06). Giving each model a
+> confusion matrix instead makes a collapsed model visibly uninformative — its
+> confusion rows become identical — and recovers the case: MAE 0.5598 → 0.1528
+> and rho −0.886 → **+0.829**. See [`multiclass_ds.md`](multiclass_ds.md) §5.
+> The identifiability symmetry is still real; it just was not what was binding
+> here.
 
 ## Three defects the ports exposed
 
@@ -183,3 +190,138 @@ puts the weight on `corr_risk`.
   information, so consensus is the only available signal — the strongest case for
   a pool, and the exact opposite of the graph transfers where the prior is the
   single best-ranking method.
+
+## The collision-aware formulation on the new domains
+
+`Trinh_proof.tex` ("Collisions: Which Closed Forms Survive") drops the hidden
+assumption `P(C=1 | Z=0) = 1-β`, which says a wrong model and a wrong
+pseudo-label *always* produce the same wrong answer. That is forced for K=2 and
+false everywhere else. Replacing it with `P(C=1 | Z=0) = (1-β)γ_g` keeps the
+E-step and the α M-step in closed form and costs only the β M-step, which becomes
+a concave one-dimensional maximization (`pooleval/new_formulation.py:200-210`).
+
+The closed-label-space ports are the natural place to test it, because there `γ`
+has an exact analytic null: under independent errors over `K` classes a wrong
+model lands on the pseudo-label's wrong class with probability `1/(K-1)`.
+
+`pooleval/domains/collision.py` estimates `γ_g` on the **source validation
+split** — never the target — by running the identical pipeline (PoolEval →
+argmax pseudo-label → count wrong-model / wrong-pseudo-label matches per
+provenance group), the domain analogue of the leave-one-dataset-out estimate in
+`zoo/collision_formulation_real.py`.
+
+### Collisions are real, large, and not close to either extreme
+
+| domain | K | null `1/(K-1)` | γ̂ source | γ̂ target (oracle) | ratio to null |
+|---|---|---|---|---|---|
+| node (6 transfers) | 5 | 0.250 | **0.863** | 0.803 | 3.4× |
+| image (2 shifts) | 10 | 0.111 | **0.924** | 0.605 | 8.3× |
+
+Both extremes in the literature are wrong. `γ=1` (the pre-collision binary
+model) overstates collision; `γ=1/(K-1)` (independent errors, what a naive
+multi-class Dawid–Skene assumes) understates it by 3–8×. The pool's wrong
+answers really do collide — which is exactly the shared-error signal
+MetaEvaluator and GNNEvaluator go after with learned shift descriptors, here read
+straight off the pool with no meta-training.
+
+### The correction does almost nothing here — the apparent gain was the α anchor
+
+> **Correction.** An earlier version of this section claimed the collision
+> correction lowered MAE in 8 of 8 runs. That comparison was **confounded** and
+> the claim was wrong. `NF binary EM (γ=1)` runs `agreement_em`, which uses
+> `run.prior` only as an *initialiser*; the collision variants run
+> `collision_agreement_em`, which keeps it as a Beta anchor and starts β from the
+> source estimate. The 0.2502 → 0.2106 improvement was almost entirely those two
+> changes, not γ.
+
+`experiments/run_gamma_ablation.py` holds the anchors and the β initialisation
+fixed and varies only γ:
+
+| node, 6 transfers | MAE | ρ | | image, 2 shifts | MAE | ρ |
+|---|---|---|---|---|---|---|
+| **γ = 1** | **0.2092** | +0.782 | | γ = 1 | 0.4076 | −0.812 |
+| γ = 1/(K−1) | 0.2146 | +0.782 | | **γ = 1/(K−1)** | **0.4055** | −0.812 |
+| γ = source | 0.2106 | +0.775 | | γ = source | 0.4072 | −0.812 |
+
+Source-measured γ beats γ=1 in **1 of 8 runs**, not 8 of 8 — and on node γ=1 wins
+all six. The spread across the whole γ range is under 0.006 MAE, and ρ is
+essentially unmoved. For reference, the confounded number: adding the α anchor
+alone takes node from 0.2502 to 0.2092.
+
+**Why γ is nearly inert in these domains.** It enters the likelihood only through
+the product `(1−β)γ`. Sweeping γ over a 10× range moves the estimate barely at
+all:
+
+| γ (graph A→C) | fitted β | (1−β)γ | mean α̂ |
+|---|---|---|---|
+| 0.10 | 0.9221 | 0.0078 | 0.7621 |
+| 0.50 | 0.9123 | 0.0438 | 0.7607 |
+| 1.00 | 0.9019 | 0.0981 | 0.7545 |
+
+Total swing in mean α̂ across that 10× range: **0.0076** (0.0393 on vision). With
+β ≈ 0.90 the collision term `(1−α)(1−β)γ ≈ 0.024` is swamped by `αβ ≈ 0.68`, so
+an agreement is overwhelming evidence of correctness whatever γ says.
+
+**γ's influence scales with `(1−β)/β`** — it matters when the pseudo-label is
+*bad*. That is a sharper account of the Text2SQL / classification split than
+"closed label space": on the real Text2SQL zoo the collision-aware variants beat
+the pre-collision one by a wide margin (MAE 11.1–11.3 vs 18.3), because there the
+pseudo-labels are far weaker. Here they are not.
+
+### Two honest caveats
+
+**γ does not transfer as well as it needs to.** The means in the table above look
+close on graph, but per group they are not: correlation between source and target
+γ is only **+0.262** across the 30 graph groups, and the vision estimate is
+nearly flat (0.873–0.973) while the truth is wildly heterogeneous
+(0.119–0.974) — ConvNeXt and the two transformer families collide at completely
+different rates under shift, and the source split cannot see it. The mechanism is
+visible in the diagnostics: source pseudo-labels are near-perfect (β̂ = 0.995 on
+MNIST), so the *only* eligible both-wrong pairs are the genuinely ambiguous
+items, which are precisely the ones everybody gets wrong the same way. 467
+eligible pairs, selected for collusion. Under shift, errors spread to ordinary
+items where mistakes are idiosyncratic, and γ falls.
+
+**Oracle γ scores *worse* than source γ on MAE, in both domains.** That is not a
+bug and it is worth stating plainly: MAE here is dominated by a common positive
+bias, and a larger γ makes an observed agreement weaker evidence of correctness,
+pushing every α̂ down. Since γ̂_source > γ_target, the overestimate cancels bias
+it was not modelling. On *ranking* the oracle does win on graph (rho +0.791 vs
++0.775). The correct reading is that γ mostly sets the **level**, not the order.
+
+### The result that matters most: don't do the binary reduction here at all
+
+Every member of the binary family loses to the multiclass estimator it is built
+on top of — node: best NF 0.2106 vs PoolEval 0.1531; image: best NF 0.4055 vs
+Dawid–Skene 0.2992.
+
+This is structural, not a tuning failure. `pooleval/latent.py` never collapses
+the pool: it keeps the full multiclass observation matrix, so a collision is
+*directly observed* — two models emitting the same wrong class land on the same
+key of the per-item score. The binary formulation reduces the pool to
+`C[j,i] = 1{model j agrees with the pseudo-label}` and throws away *which* wrong
+answer each model gave; `γ_g` is one scalar per group trying to summarise what
+the full matrix records exactly. Fitting γ recovers a large part of that loss
+(16% on graph) but cannot recover all of it.
+
+So the experiment supports the proof and bounds its scope:
+
+- The collision correction is **necessary** wherever the binary reduction is
+  used — γ=1 is badly wrong for K>2, and it is wrong in a measurable direction.
+- The binary reduction is **worth making only when the answer space is
+  unbounded**. In Text2SQL an "answer" is an execution result table, there is no
+  finite class set to index, and collapsing to agreement-with-pseudo-label is a
+  genuine simplification. In image and node classification the class set is
+  closed and small, the full matrix is free, and reducing to a binary matrix is
+  pure information loss.
+
+Reproduce with `python experiments/run_domain_{graph,vision}.py`; γ diagnostics
+land in the `gamma` field of `results/domain_{graph,vision}.json`.
+
+**Follow-up.** [`multiclass_ds.md`](multiclass_ds.md) takes the conclusion of
+this section seriously and asks what the right closed-label-space estimator
+actually is. Short answer: textbook multiclass Dawid–Skene, closed form in both
+steps — but its *implied* collision rate `1/(K-1)` is wrong by 1.9×–6.4× on
+these same pools, and fixing that with per-model confusion matrices beats every
+estimator in the tables above on vision (MAE 0.0872, rho +0.914, top-1 correct in
+both shifts).
