@@ -145,10 +145,12 @@ def collision_agreement_em(C, group, gamma_group, alpha_prior,
     """Collision-aware binary EM for multiclass wrong results.
 
     ``gamma_group[g]`` is fixed from labeled source/meta data. ``alpha_prior`` is
-    retained in the objective as a Beta prior with effective sample size
-    ``alpha_strength``; it is not merely an initializer. The alpha M-step remains
-    closed form. The beta M-step is a bounded one-dimensional maximization because
-    the original beta closed form is invalid once gamma is introduced.
+    retained in the objective as a Beta prior with added evidence strength
+    ``alpha_strength``; its total Beta ESS is ``alpha_strength + 2`` under the
+    Beta(1,1) reference convention. It is not merely an initializer. The alpha
+    M-step remains closed form. The beta M-step is a bounded one-dimensional
+    maximization because the original beta closed form is invalid once gamma is
+    introduced.
     """
     C = np.asarray(C, dtype=float)
     group = np.asarray(group, dtype=int)
