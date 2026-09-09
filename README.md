@@ -577,6 +577,46 @@ python experiments/run_domain_caption.py
 python experiments/run_domain_kgc.py
 ```
 
+## Coverage bound and the two effective sample sizes
+
+Two derivations added to the paper are implemented, tested, and measured here: the
+coverage/Hoeffding accuracy bound (monotone submodularity, the greedy `1 - 1/e`
+factor, the weighted-Hoeffding concentration term) and the Morita-Thall-Mueller
+curvature-matched effective sample size of the Beta anchor.
+`pooleval/theory.py` holds the primitives, `tests/test_theory.py` verifies every
+algebraic claim against the numbers stated in the proofs (14 tests),
+`experiments/run_theory_ablation.py` is the head-to-head, and
+`experiments/run_ess_coverage.py` is the diagnostic suite.
+
+**Head-to-head on the real SynSQL probes and the five real Text2SQL targets** (MAE in
+accuracy points, lower is better):
+
+| | prior MAE | PoolEval MAE | collision-EM MAE |
+|---|---:|---:|---:|
+| Baseline -- no new theory | 24.76 | 22.61 | 25.60 |
+| **Best new-theory configuration** | **22.57** | **18.86** | **21.18** |
+
+The winning combination is **greedy coverage selection + target-matched weights +
+item-scaled `s_beta`**, at full prior strength: -3.75 MAE, winning 4 of 5 targets.
+Greedy and matching only work *together* -- greedy alone is +0.49, matched alone is
+-1.27, both are -3.75.
+
+The one ingredient that does not work is the coverage-derived power-prior discount
+`a0 = f_cov/N`: it is near-constant at 0.57 across five targets whose true accuracy
+spans 0.05-0.74, the optimum is always at a boundary, and adopting it costs +1.24 MAE.
+The factor `J` in `s_beta` is also unsupported. Separately, the accuracy bound holds
+on 50/50 model-target pairs but is vacuous: at 2.0-9.4x the real error it promises
+"within 0.75-0.87" about a quantity that already lives in [0, 1]. Coverage sits at
+0.57, where `B <= 0.2` would need 0.92.
+
+Full write-up with all tables: [`docs/ess_coverage.md`](docs/ess_coverage.md).
+
+```bash
+python -m pytest tests/test_theory.py -q
+python experiments/run_theory_ablation.py
+python experiments/run_ess_coverage.py
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -16,7 +16,7 @@ from .prior_bounds import (beta_effective_sample_size,
                            shifted_cosine_similarity)
 from .active import ActivePoolEval, ActiveConfig, SimulatedJudge
 from .data import simulate, PoolRun
-from . import metrics, kernel
+from . import metrics, kernel, theory
 
 __all__ = ["Config", "PoolEval", "NewFormulationPoolEval", "agreement_em",
            "CollisionAwareNewFormulationPoolEval", "collision_agreement_em",
@@ -26,5 +26,5 @@ __all__ = ["Config", "PoolEval", "NewFormulationPoolEval", "agreement_em",
            "beta_effective_sample_size",
            "bound_feasibility",
            "ActivePoolEval", "ActiveConfig", "SimulatedJudge", "simulate", "PoolRun",
-           "metrics", "kernel"]
+           "metrics", "kernel", "theory"]
 __version__ = "0.1.0"
