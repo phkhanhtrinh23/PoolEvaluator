@@ -39,8 +39,16 @@ def gde(pred_a, pred_b):
 
 
 def confidence_baselines(pool):
-    """-> {method: [M] accuracy estimates} for a pool dict from build_pool."""
-    P_s, P_t = pool["prob_s"], pool["prob_t"]
+    """-> {method: [M] accuracy estimates} for a pool dict from build_pool.
+
+    Returns {} when the task cannot supply per-item softmaxes. Knowledge-graph
+    completion is the case: a distribution over 14541 entities per query is
+    neither affordable to store nor comparable to a 10-way softmax, so DoC and
+    ATC are simply not defined on the same footing there.
+    """
+    P_s, P_t = pool.get("prob_s"), pool.get("prob_t")
+    if P_s is None or P_t is None or np.ndim(P_s) != 3:
+        return {}
     gold_s = pool["src_gold_val"]
     M = P_t.shape[0]
     out = {"DoC": np.zeros(M), "ATC-MC": np.zeros(M), "ATC-NE": np.zeros(M)}
