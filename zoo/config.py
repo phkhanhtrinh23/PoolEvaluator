@@ -18,8 +18,11 @@ SPIDER_DB_DIRS = [os.path.join(DATA_ROOT, "spider", "database"),
                   os.path.join(DATA_ROOT, "spider", "test_database")]
 
 # where generations / results / poolruns are cached (in the code repo, gitignored)
-ARTIFACT_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "zoo_artifacts")
+ARTIFACT_ROOT = os.environ.get(
+    "POOLEVAL_ARTIFACT_ROOT",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "zoo_artifacts"),
+)
 
 
 @dataclass

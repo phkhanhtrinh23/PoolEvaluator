@@ -186,6 +186,8 @@ python experiments/run_rq5_scaling.py     --seeds 5    # scaling with pool size
 python experiments/run_rq6_reliability_efficiency.py --seeds 5 # coverage, ECE, cost, budget
 python experiments/run_rq7_warmstart.py    --seeds 5    # warm-start optimization
 python experiments/run_rq8_drift.py        --seeds 5    # workload drift
+python experiments/run_prior_bound_validation.py --trials 500  # coverage bound + ESS theory
+python experiments/report_mae_comparison.py --results-root /path/to/results # cross-domain MAE table
 python experiments/run_all.py             --seeds 8    # everything -> results/*.json
 ```
 
