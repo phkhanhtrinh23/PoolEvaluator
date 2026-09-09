@@ -603,8 +603,9 @@ The one ingredient that does not work is the coverage-derived power-prior discou
 `a0 = f_cov/N`: it is near-constant at 0.57 across five targets whose true accuracy
 spans 0.05-0.74, the optimum is always at a boundary, and adopting it costs +1.24 MAE.
 The factor `J` in `s_beta` is also unsupported. Separately, the accuracy bound holds
-on 50/50 model-target pairs but is loose by an order of magnitude, because coverage
-sits at 0.57 where a useful bound needs 0.92.
+on 50/50 model-target pairs but is vacuous: at 2.0-9.4x the real error it promises
+"within 0.75-0.87" about a quantity that already lives in [0, 1]. Coverage sits at
+0.57, where `B <= 0.2` would need 0.92.
 
 Full write-up with all tables: [`docs/ess_coverage.md`](docs/ess_coverage.md).
 
