@@ -10,10 +10,10 @@ from .new_formulation import (NewFormulationPoolEval, agreement_em,
                               collision_agreement_em)
 from .active import ActivePoolEval, ActiveConfig, SimulatedJudge
 from .data import simulate, PoolRun
-from . import metrics, kernel
+from . import metrics, kernel, theory
 
 __all__ = ["Config", "PoolEval", "NewFormulationPoolEval", "agreement_em",
            "CollisionAwareNewFormulationPoolEval", "collision_agreement_em",
            "ActivePoolEval", "ActiveConfig", "SimulatedJudge", "simulate", "PoolRun",
-           "metrics", "kernel"]
+           "metrics", "kernel", "theory"]
 __version__ = "0.1.0"
