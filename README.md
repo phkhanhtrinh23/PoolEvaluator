@@ -575,6 +575,31 @@ python experiments/run_domain_caption.py
 python experiments/run_domain_kgc.py
 ```
 
+## Coverage bound and the two effective sample sizes
+
+Two derivations added to the paper are implemented and tested here: the
+coverage/Hoeffding accuracy bound (monotone submodularity, the greedy `1 - 1/e`
+factor, and the weighted-Hoeffding concentration term) and the Morita-Thall-Mueller
+curvature-matched effective sample size of the Beta anchor. `pooleval/theory.py`
+holds the primitives, `tests/test_theory.py` verifies every algebraic claim against
+the numbers stated in the proofs, and `experiments/run_ess_coverage.py` measures the
+parts the proofs cannot settle, on the real SynSQL probes and the real Text2SQL
+targets.
+
+Headlines: the bound holds on 50/50 model-target pairs and is loose by roughly an
+order of magnitude, because normalized coverage sits at 0.57 where a useful bound
+needs 0.92; the anchor's MTM08 ESS is `s + 2`, not `s`; the coverage-derived
+power-prior discount is near-constant at 0.57 across five targets and never optimal;
+the factor `J` in the pool-level anchor never wins; and switching to target-matching
+weights is preferred by the bound on 5/5 targets but by the data on only 2/5, because
+matching buys no coverage and costs 2.4-3.4x in the sampling term. Full write-up with
+all tables in [`docs/ess_coverage.md`](docs/ess_coverage.md).
+
+```bash
+python -m pytest tests/test_theory.py -q
+python experiments/run_ess_coverage.py
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
