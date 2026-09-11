@@ -15,6 +15,43 @@ algebraic claim), [`run_theory_ablation.py`](../experiments/run_theory_ablation.
 (head-to-head), [`run_ess_coverage.py`](../experiments/run_ess_coverage.py)
 (diagnostics).
 
+## What `ESS = s + 2` means: the prior is pretend data
+
+A Beta prior is just data you pretend you already saw. A `Beta(a, b)` prior on a
+probability — a model's accuracy — behaves in the posterior *exactly* like having
+already observed `a` pretend successes and `b` pretend failures, so it is "worth"
+`a + b` observations. Concretely, after `N` real Bernoulli trials with `k` successes
+the posterior mean is
+
+```
+(a + k) / (a + b + N),
+```
+
+a weighted average of the prior mean `pi = a / (a + b)` and the data mean `k / N`, with
+weight `(a + b) / (a + b + N)` on the prior. So `a + b` is literally how many real
+observations the prior counts as when it is fused with new data: delete the prior, hand
+the estimator `a + b` extra labeled points instead, and you get the same pull.
+
+*Worked number.* `Beta(8, 2)` has mean `0.8` and is worth `a + b = 10` observations (8
+pretend-correct, 2 pretend-wrong). Observe `N = 40` real trials with `20` correct (data
+mean `0.5`): posterior mean `= (8 + 20) / (10 + 40) = 0.56`, i.e. `0.2 * 0.8 + 0.8 *
+0.5`. The prior, worth 10 observations, gets a `10 / 50 = 20%` vote against the 40 real
+ones.
+
+For PoolEval's anchor `Beta(1 + s*pi, 1 + s*(1 - pi))` this gives `ESS = a + b = s + 2`
+with `s = a0 * n0`. Two cautions:
+
+- The pull in the MAP combination uses `s`, not `s + 2` — mixing weight `s / (N + s)` —
+  because the `+2` uniform `Beta(1,1)` baseline contributes curvature (so it counts in
+  the ESS) but contributes zero exponents to the MAP objective. At current settings
+  `s / (N + s) ~ 0.32`, so the anchor supplies about a third of the posterior accuracy.
+- This prior ESS is a completely different quantity from the concentration ESS
+  `n_eff = 1 / sum_z w_z^2` that gates the coverage bound (§5.11-§5.12). `s + 2` says how
+  much the *prior* counts as data when fused with new evidence; `n_eff` says how many
+  clean observations a *noisy weighted average* is worth. They answer different
+  questions and take different values — the full side-by-side contrast is in
+  `stage1_accuracy_bound_and_em_gap_proof.md`, Section 23.1.
+
 Everything below is measured on **real** data: 800 labeled SynSQL probe items, 10 real
 models, real SQL execution, five real Text2SQL targets. MAE is in accuracy points.
 
