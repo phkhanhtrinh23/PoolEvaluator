@@ -41,8 +41,10 @@ So both plug in underneath the existing machinery rather than beside it.
 | `experiments/run_validated_em.py` | 450 | A | the three-domain experiment (Text2SQL, vision, graph) |
 | `experiments/report_validated_em.py` | 92 | A | turns the result JSON into markdown tables |
 | `docs/validated_em.md` | 289 | A | the derivation, the pipeline, the diagnostics |
-| `pooleval/semantic.py` | 256 | B | domain-agnostic meaning-clustering and semantic entropy |
-| `zoo/semantic_sql.py` | 354 | B | Text2SQL: database test suite + SQL AST tie-breaker |
+| `zoo/exec_suite.py` | 254 | B | Text2SQL: database test suite, execution only |
+| `pooleval/partitions.py` | 97 | B/C | class-id bookkeeping, partition quality, greedy clustering |
+| `pooleval/answer_matching.py` | 260 | C | five matchers for free-text VLM/GLM answers |
+| `pooleval/estimators.py` | 113 | acq | Horvitz-Thompson, model-assisted, inverse-variance fusion |
 | `tests/test_semantic.py` | 185 | B | 16 tests, pinned on the two directions of error |
 | `experiments/run_semantic_kernel.py` | 269 | B | exact vs semantic kernel, through the whole stack |
 
@@ -62,7 +64,7 @@ from .validated_em import (LabeledStatistics, correctness_em, JudgeExpert,
 from . import metrics, kernel, theory, validated_em
 ```
 
-`pooleval/semantic.py` and `zoo/semantic_sql.py` are imported by path, not re-exported,
+`zoo/exec_suite.py` is imported by path, not re-exported,
 because the kernel is chosen per experiment rather than globally.
 
 ---
@@ -199,155 +201,89 @@ refreshes `e`/`gamma` on every judge call, confirmation included.
 
 ---
 
-# Part B — semantic answer equivalence
+# Part B — Text-to-SQL equivalence by execution across a suite
 
 ## B1. The problem
 
-Every estimator consumes one fact: *are these two answers the same?* On an open output
-space, exact match answers that question wrongly, and wrongly in a **directional** way:
+Every estimator here consumes one fact: *are these two answers the same?* For
+Text-to-SQL the answers are executed result tables, and comparing them on the ONE shipped
+database instance is unsound in a specific direction: two genuinely different queries can
+coincide there by accident — `LIMIT 1` when only one row qualifies, a filter that excludes
+nothing, an aggregate over a constant column. Each accident is a **false collision**, and
+that is the expensive error here: it tells `e` two models fail together when they do not,
+and tells the latent posterior a wrong class has more independent support than it has.
 
-| quantity | exact-match bias | consequence |
-|---|---|---|
-| $e$ | **under**counts | near-clones failing the same way in different words look independent → the vote discount never fires → the correlated-error trap reopens |
-| $\gamma$ | **over**counts (→1) | EM concludes wrong models reliably disagree with wrong pseudo-labels → it over-trusts agreement |
-| $Z$ | mis-graded | "correct" is also an equality test against gold |
+## B2. The fix, and its guarantee
 
-So the fix belongs in the **observation kernel**, not the model.
+Two equivalent queries agree on **every** database instance. So evaluating both on extra,
+row-sampled instances can only ever SPLIT a class one instance merged — never split a
+truly equivalent pair. **Sound by construction**, which is why no threshold appears
+anywhere in `zoo/exec_suite.py`.
 
-## B2. Relation to the Nature paper
+This is the pairwise-equivalence half of test-suite accuracy (Zhong, Yu & Klein, EMNLP
+2020), and it is what `pooleval/kernel.py`'s LA2 — *"multi-instance (re-run on t
+constraint-preserving sub-instances)"* — has always described but only ever SIMULATED via
+a precision parameter; in real-data mode that kernel is the identity. This makes LA2 real.
 
-Farquhar, Kossen, Kuhn & Gal, *Nature* **630**:625–630 (2024) has two separable halves:
+**There is no clustering, no embedding and no syntactic tie-breaker.** An earlier version
+gated an SQL-AST similarity behind the execution signature; it was removed, because for
+SQL the semantics of a query *is* its behaviour on databases and more instances is the
+direct test rather than a proxy.
 
-* **(a) clustering generations by meaning** via bidirectional entailment — *this is what transfers*, with M models' answers in place of M samples from one model;
-* **(b) entropy over those clusters** as an uncertainty score — *this arrives for free*: once classes are meaning-clusters, the $H(o)$ already used to pick what the expert validates **is** a discrete semantic entropy, weighted by reliability-discounted vote mass instead of sample frequency.
+## B3. `zoo/exec_suite.py` (254 lines)
 
-Combined with the measured result that $IG(o)\approx H(o)$ (Spearman 1.000 / 0.995),
-the acquisition rule becomes *"validate the highest-semantic-entropy item"*.
-
-## B3. `pooleval/semantic.py` — domain-agnostic
-
-| function | purpose |
+| function | role |
 |---|---|
-| `greedy_meaning_clusters(n, equivalent, order)` | first-match against cluster representatives — the paper's clustering; **cannot chain** |
-| `clusters_from_similarity(S, threshold, order)` | the same with `equivalent(i,j) = S[i,j] >= threshold` |
-| `connected_components(adjacency)` | transitive closure — **for comparison only**, it over-merges |
-| `refine(coarse, fine)` | product of two partitions: can split, can never merge |
-| `gated_clusters(separator, similarity, threshold, decided)` | hard evidence decides; the soft signal only reaches what it cannot |
-| `cluster_probabilities(labels, weights)` | $p(c)$, uniform (the paper's *discrete* variant) or reliability-weighted |
-| `semantic_entropy`, `discrete_semantic_entropy` | $-\sum_c p(c)\log p(c)$ |
-| `to_repo_classes(labels, gold_cluster)` | into the repo convention, `0 == correct` |
-| `canonical_relabel` | stable renumbering for comparison |
-| `partition_quality(predicted, gold)` | pairwise precision / recall of an induced equivalence |
+| `build_variants` | `k` row-sampled copies of a database, cached on disk |
+| `informative_instances` | keep only instances where the GOLD query still returns rows |
+| `execution_signature` | the tuple of canonical result keys across the suite |
+| `item_evidence` | execute once, keep everything — both kernels compared on identical evidence |
+| `single_instance_classes` / `suite_classes` | the two partitions |
+| `correct_flags` | `(execution accuracy, test-suite accuracy)` per model |
 
-**Why greedy and not connected components.** Bidirectional entailment is not transitive,
-so the relation is not an equivalence relation and a closure has to be chosen.
-Components chain — $a\equiv b$, $b\equiv c$ merges $a$ with $c$ — and in a framework
-that reads agreement as evidence, merging is the dangerous direction. First-match
-cannot chain. The sweep `order` is pinned so the kernel is reproducible.
+Two details that are not cosmetic:
 
-**Why `partition_quality` exists.** Coarsening equality is a risk, not automatically a
-win: a kernel that over-merges *manufactures consensus*. Low **precision** means
-answers that differ were merged — the failure that corrupts everything downstream. Low
-recall merely leaves signal on the table. Measure both before adopting a kernel.
+* Sampling is a deterministic salted hash of the row id, never `RANDOM()` — otherwise the
+  equivalence relation itself would be non-reproducible.
+* `informative_instances` is required. Prune enough and every query returns the empty
+  table, all of them collide, and the variant MANUFACTURES the agreement it was added to
+  disprove. Writing its test found a real bug: `result_key` returns `(arity, rows)`, so an
+  earlier emptiness check read the arity and always returned `True`, leaving the filter
+  inert.
 
-## B4. `zoo/semantic_sql.py` — Text-to-SQL
+**Correctness is still decided on the original database against gold.** Variants only
+decide which WRONG answers are the same wrong answer, so row sampling changing a gold
+result on a variant is harmless by construction.
 
-### The test suite (`build_variants`, `informative_instances`, `execution_signature`)
+## B4. Measured — Spider, 150 target items, 10 models, K=3 variants
 
-Two genuinely equivalent queries agree on **every** database instance. So evaluating
-both on extra, row-sampled instances can only **split** a class the single instance
-merged; it can never split a truly equivalent pair. **Sound by construction.** This is
-the pairwise-equivalence half of test-suite accuracy (Zhong, Yu & Klein, EMNLP 2020) —
-and it is what `kernel.py`'s LA2, *"multi-instance (re-run on t constraint-preserving
-sub-instances)"*, has only ever **simulated** via a precision parameter. In real-data
-mode the kernel was the identity; this makes LA2 real for the first time.
+The exact path reproduces the stored `true_class` on **150/150** items, so the two kernels
+are compared on a faithful reimplementation.
 
-* Sampling is a deterministic salted hash of the row id, never `RANDOM()` — otherwise the equivalence relation itself would be non-deterministic.
-* Foreign keys are deliberately not repaired: a dangling reference makes a join drop rows, which is precisely the perturbation that separates two queries that coincided on the full instance. Realism is not required of a test suite; discrimination is.
-* `informative_instances` keeps only instances where the **gold** query still returns rows. Without it, pruning eventually makes every query return empty, all of them collide, and the variant manufactures the agreement it was added to disprove.
-* Size caps (`--max-db-mb`, `--budget-mb`) skip oversized databases, which then fall back to single-instance evidence — still sound, just less discriminating. Coverage is reported.
-
-### The AST tie-breaker (`ast_features`, `feature_cosine`, `ast_similarity_matrix`)
-
-`sqlglot` parse → `simplify` → bag of node types, table/column/literal multisets and
-clause flags. Unparseable SQL falls back to character trigrams so a garbled generation
-lands somewhere instead of crashing the kernel.
-
-**The AST is a tie-breaker, never a decider.** Measured:
-
-| pair | cosine | truth |
+| | single instance | **suite** |
 |---|---|---|
-| `WHERE x > 5` vs `WHERE 5 < x` | 1.0000 | same meaning ✓ |
-| `WHERE x=1 AND y=2` vs `WHERE y=2 AND x=1` | 1.0000 | same meaning ✓ |
-| `LIMIT 1` vs `LIMIT 2` | **0.9333** | **different answers** ✗ |
+| informative variants / item | — | 2.61 (13 items have none) |
+| clusters / item | 1.58 | 1.71 |
+| items split / merged | — | **15 / 0** |
+| pairwise precision vs single | — | **1.0000** |
 
-Any threshold loose enough to catch the paraphrases also merges `LIMIT 1` with
-`LIMIT 2`. Execution across a suite is *sound*; AST similarity is neither sound nor
-complete. **They are therefore gated, not concatenated** — equivalently
-$S = S_{\text{exec}}\cdot S_{\text{ast}}$ with $S_{\text{exec}}\in\{0,1\}$, so the AST
-can refine within an execution class but never merge across one. Concatenating the two
-embeddings would let the unsound signal undo the only guarantee in the construction.
-
-### One pass, three gradings
-
-`item_evidence` executes each query once against the whole suite and keeps everything;
-`exact_classes`, `semantic_classes` and `correct_flags` all derive from it, so the two
-kernels are guaranteed to be compared on identical evidence and nothing is executed
-twice.
-
-`semantic_classes(..., merge_errors=False)` restores the repo convention exactly (a
-query that failed everywhere keeps its own class, the AST gets no vote) — the only
-configuration in which the semantic kernel is a **pure refinement** with no merging at
-all.
-
-**Correctness is not decided by the variants.** Whether a model is right is still
-decided on the original database against gold, so row sampling changing a gold result
-on a variant is harmless by construction. `correct_flags` additionally reports
-test-suite correctness as a separate, stricter grading.
-
-## B5. Measured (Spider, 150 target items, 10 models, K=3 variants, 60 instances, 317 MB)
-
-**The exact path reproduces the stored `true_class` on 150/150 items**, so the two
-kernels are being compared on a faithful reimplementation, not an approximation.
-
-### Kernel diagnostics
-
-| | exact | semantic (`merge_errors=False`) | semantic (`=True`) |
-|---|---|---|---|
-| informative variants / item | — | 2.96 | 2.96 |
-| clusters / item | 1.58 | **1.72** | 1.70 |
-| items split / merged | — | **16 / 0** | 15 / 2 |
-| pairwise precision vs exact | — | **1.0000** | 0.9984 |
-| mean semantic entropy | 0.2193 | 0.2739 | 0.2711 |
-
-`merge_errors=False` measures **precision 1.0000 with zero merges** — the soundness
-guarantee of §B4, confirmed rather than asserted. Turning the AST fallback on merges 2
-of 150 items (both all-erroring queries), which is the only merge path in the design.
+**Precision 1.0000 with zero merges is the soundness guarantee, measured rather than
+asserted.**
 
 ### The statistics move in the predicted direction
 
-| | exact | semantic |
+| | single | suite |
 |---|---|---|
-| $e$ off-diagonal mean | 0.1239 | **0.1278** |
-| $\gamma^{\text{both}}$ mean | 0.1863 | 0.2209 |
-| $P(C=0\mid Z=0)$ | 0.8466 | **0.8340** |
-| $\beta$ | 0.8115 | 0.7869 |
+| `e` off-diagonal mean | 0.1239 | **0.1281** |
+| `P(C=0 \| Z=0)` | 0.8466 | **0.8331** |
+| `beta` | 0.8115 | 0.7787 |
 
-**Why $e$ goes UP under a kernel that only ever splits.** The suite splits the
-previously-single *correct* class: models that matched gold on the shipped instance by
-coincidence are demoted into a shared **wrong** class, and shared wrong answers are
-exactly what $e$ counts (class 0 is excluded from collisions by construction). So the
-test suite **converts invisible shared error — hidden inside the "correct" class — into
-visible shared error**, which is precisely the collusion signal the framework was blind
-to. Meanwhile $P(C=0\mid Z=0)$ falls, as predicted: single-instance matching was
-recording coincidental agreement as real.
-
-Note the direction is the *opposite* of the free-text case. For SQL, canonicalised
-result comparison already absorbs paraphrase-like variation (row order, types,
-rounding), so the residual equality error is dominated by **over-merging** (coincidental
-collisions), and the suite fixes it by splitting. For "Paris" vs "It's Paris" the
-dominant error is **under-merging**. Both are equality errors; which one dominates is a
-property of the output space, not of the method.
+**Why `e` goes UP under a kernel that only ever splits.** The suite splits the previously
+single *correct* class: models that matched gold on the shipped instance by coincidence
+are demoted into a shared **wrong** class, and shared wrong answers are exactly what `e`
+counts. So the suite **converts invisible shared error — hidden inside the "correct"
+class — into visible shared error**, which is the collusion signal the framework was blind
+to.
 
 ### Ground truth itself moves
 
@@ -355,34 +291,35 @@ property of the output space, not of the method.
 |---|---|---|
 | single-instance execution accuracy | 0.743 | 0.800 |
 | test-suite accuracy | 0.709 | 0.760 |
-| **overestimate** | **3.40 pts** | 4.7 pts |
+| **overestimate** | **3.00 pts** | 4.7 pts |
 
-51 of 1500 cells demoted, **and the pool ranking changes**. Both gradings are therefore
-reported below, because scoring one estimate against one truth and another against a
-different truth would be meaningless.
+45 of 1500 cells demoted, **and the pool ranking changes**. Both gradings are therefore
+reported, since scoring one estimate against one truth and another against a different
+truth would be meaningless.
 
-### MAE in accuracy points, lower is better
+### MAE, lower is better
 
-| method | exact kernel / exact truth | semantic kernel / exact truth | exact kernel / suite truth | semantic kernel / suite truth |
+| method | single/single | **suite**/single | single/suite | **suite**/suite |
 |---|---|---|---|---|
-| prior only | 3.73 | 3.73 | 6.47 | 6.47 |
-| PoolEval-SQL | 13.45 | **11.19** | 16.85 | **14.59** |
-| collision EM (`.tex`) | 11.15 | **10.04** | 14.55 | **13.44** |
-| validated EM (no judge) | 9.18 | **7.64** | 12.58 | **11.04** |
-| validated EM + judge b=10 | 7.57 | **6.31** | 10.97 | **9.71** |
-| validated EM + judge b=40 | **3.20** | 3.27 | **6.60** | 6.67 |
+| prior only | 3.73 | 3.73 | 6.07 | 6.07 |
+| PoolEval-SQL | 13.45 | **11.41** | 16.45 | **14.41** |
+| collision EM (`.tex`) | 11.15 | **10.27** | 14.15 | **13.27** |
+| validated EM (no judge) | 9.18 | **7.79** | 12.18 | **10.79** |
+| validated EM + judge b=10 | 7.57 | **6.38** | 10.57 | **9.22** |
+| validated EM + judge b=40 | 3.20 | **3.17** | 6.20 | **6.05** |
 
-The semantic kernel improves **every** unsupervised estimator, by 1.1–2.3 points, and
-the ordering of methods is unchanged — so the gain is a better observation, not a
-re-ranking artefact. At budget 40 the judge already dominates and the two kernels tie,
-which is the expected ceiling: once enough items are pinned to ground truth, how the
-remaining ones are clustered matters less.
+The suite improves **every** unsupervised estimator by 0.9–2.0 points and the method
+ordering is unchanged — so the gain is a better observation, not a re-ranking artefact. At
+budget 40 the judge already dominates and the two tie, the expected ceiling.
 
-## B6. What Part B does **not** change
+## B5. What Part B does **not** change
 
-* `pooleval/kernel.py`, `zoo/execute.py`, `zoo/build.py` — untouched. `result_key` is reused as-is.
-* No neural model, no download: `sqlglot` for the AST, SQLite for execution. A neural embedder or NLI backend is a pluggable `equivalent(i,j)` predicate for free-text domains, not a dependency.
-* The vision and graph ports keep exact match, correctly: their label spaces are closed (10 and 5 classes) and models emit label indices, so exact match is already exact. Semantic clustering there could only wrongly merge two distinct labels.
+* `pooleval/kernel.py`, `zoo/execute.py`, `zoo/build.py` — untouched; `result_key` is
+  reused as is.
+* No model, no download: SQLite execution and nothing else.
+* `pooleval/partitions.py` holds only the bookkeeping that is not about meaning —
+  `to_repo_classes` and `partition_quality` (plus the greedy clustering primitives Part C
+  needs).
 
 ---
 

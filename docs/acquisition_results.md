@@ -1,10 +1,8 @@
 # Acquisition: information gain about the MEAN, and design-based estimation
 
-**Status: partial.** Text-to-SQL is complete (5 datasets, 7 case/protocol combinations).
-Image is 1 of 2 shifts, node 1 of 6; both are still running and the tables below are
-marked accordingly. Analysis will be revised against the full table — nothing here is
-final, and the pattern that currently looks strongest is also the one with the fewest
-cases behind it.
+**Status: complete.** All three tasks, 15 cases: Text-to-SQL (5 datasets, 7
+case/protocol combinations), image (2 shifts), node (6 shifts). Budget 40, 5 seeds each.
+A companion experiment (§7) crosses the statistics-refresh rule against every selector.
 
 Code: `pooleval/validated_em.py` (acquisition), `pooleval/estimators.py` (design-based
 estimators), `experiments/run_validated_em.py` (`_acquisition_block`).
@@ -79,41 +77,53 @@ safe floor.
 
 ---
 
-## 3. Image classification — PARTIAL (1 of 2 shifts)
+## 3. Image classification — COMPLETE
 
-| acquisition rule | mnist→usps | mnist→svhn |
-|---|---|---|
-| IG [label entropy, Hung et al.] | 3.03 | *pending* |
-| **IG [accuracy variance, $A_\mu$]** | **1.68** | *pending* |
-| $A_\mu$ sampled | 2.61 (sd 0.55) | *pending* |
-| random sampling | 2.32 (sd 0.55) | *pending* |
-| hybrid: audit + $A_\mu$ | 3.72 → fused 3.47 | *pending* |
-| hybrid: audit + IG | 2.48 → fused 2.46 | *pending* |
+| acquisition rule | mnist→usps | mnist→svhn | **mean** |
+|---|---|---|---|
+| IG [label entropy, Hung et al.] | 3.03 | 46.73 | 24.88 |
+| **IG [accuracy variance, $A_\mu$]** | **1.68** | **13.03** | **7.36** |
+| $A_\mu$ sampled ($\epsilon$-mixed softmax) | 2.61 | 39.61 | 21.11 |
+| random sampling | 2.32 | 19.73 | 11.03 |
+| hybrid: audit + $A_\mu$ | 3.72 | 14.06 | 8.89 |
+| hybrid: audit + IG | 2.48 | 31.06 | 16.77 |
 
-$A_\mu$ cuts MAE by **45%** (3.03 → 1.68), the largest margin measured anywhere so far.
-The missing shift is the adversarial one — MNIST→SVHN has a pool that is 13% accurate
-with a consensus wrong on 94% of items — so this row will very likely move the
-conclusion and should not be read alone.
+**The largest effect measured anywhere: $A_\mu$ cuts MAE by 70% (24.88 → 7.36), and on
+MNIST→SVHN by a factor of 3.6 (46.73 → 13.03).**
+
+MNIST→SVHN is the adversarial case -- the pool is 13% accurate and its consensus is wrong
+on 94% of items, so label entropy is *anti*-correlated with consensus failure and spends
+the budget on the items the consensus already gets right. An earlier note in this project
+concluded from that "random beats active selection here". That was wrong: it was Hung's
+OBJECTIVE that failed, not active selection. $A_\mu$'s leverage factor finds those items
+and beats random by 6.7 points.
+
+**Caveat on the estimators.** On MNIST→SVHN inverse-variance fusion FAILS (13.92 and
+30.82, worse than either input -- HT 5.43, model-assisted 6.21). Fusion assumes both
+inputs unbiased; the model estimate there is not, so precision-weighting imports its bias.
+On a pool that broken only the design-based estimators should be read.
 
 ---
 
-## 4. Node classification — PARTIAL (1 of 6 shifts)
+## 4. Node classification — COMPLETE (6 shifts)
 
-| acquisition rule | AC | AD, CA, CD, DA, DC |
-|---|---|---|
-| IG [label entropy, Hung et al.] | 7.12 | *pending* |
-| IG [accuracy variance, $A_\mu$] | 8.85 | *pending* |
-| **$A_\mu$ sampled** | **6.19** (sd 0.80) | *pending* |
-| random sampling | 7.85 (sd 1.06) | *pending* |
-| hybrid: audit + $A_\mu$ | 7.43 → fused 7.26 | *pending* |
-| hybrid: audit + IG | 7.34 → fused 7.20 | *pending* |
+| acquisition rule | AC | AD | CA | CD | DA | DC | **mean** | worst |
+|---|---|---|---|---|---|---|---|---|
+| IG [label entropy, Hung et al.] | 7.12 | 12.73 | 9.52 | 8.87 | 10.06 | **6.35** | 9.11 | 12.73 |
+| IG [accuracy variance, $A_\mu$] | 8.85 | 11.82 | 12.29 | 11.39 | 10.55 | 8.35 | 10.54 | 12.29 |
+| **$A_\mu$ sampled** | **6.19** | 12.25 | **9.15** | 8.94 | 10.99 | 6.69 | **9.04** | 12.25 |
+| random sampling | 7.85 | **11.82** | 9.68 | 11.65 | 11.36 | 8.72 | 10.18 | **11.82** |
+| hybrid: audit + $A_\mu$ | 7.43 | 12.64 | 10.47 | 11.04 | 10.76 | 8.54 | 10.14 | 12.64 |
+| hybrid: audit + IG | 7.34 | 13.42 | 10.05 | 10.55 | 11.25 | 9.28 | 10.32 | 13.42 |
 
-The one case so far where **deterministic $A_\mu$ is the worst rule (8.85) while the
-SAME score sampled is the best (6.19)**. If that survives the remaining five shifts it is
-the most interesting result in this table: it would say the $A_\mu$ ranking carries real
-signal while its argmax overcommits, and that the $\epsilon$-mixed softmax introduced for
-the positivity condition doubles as a regulariser on a score the model cannot yet be
-trusted to rank perfectly. One shift is not enough to claim it.
+**This is where $A_\mu$ loses.** Deterministic $A_\mu$ is the *worst* rule (10.54) and
+label-entropy IG beats it (9.11). But **sampling the same score is the best rule** (9.04)
+-- a pattern visible on the single AC shift beforehand and confirmed across all six.
+
+The reading: $A_\mu$'s *ranking* carries real signal on these pools while its *argmax*
+overcommits. The $\epsilon$-mixed softmax introduced to satisfy the positivity condition
+turns out to double as a regulariser on a score the model cannot yet be trusted to rank
+perfectly. That is a design-based safeguard paying off for a second, unplanned reason.
 
 ---
 
@@ -144,9 +154,128 @@ Two implementation points that are not cosmetic:
 
 ---
 
-## 6. To be revised when the full table lands
+## 6. Across all three tasks
 
-1. Whether $A_\mu$'s image win survives MNIST→SVHN, the adversarial shift.
-2. Whether sampled-$A_\mu$ beating deterministic-$A_\mu$ holds across the six node shifts.
-3. What actually discriminates the cases where $A_\mu$ wins from where it loses, given
-   that pool accuracy alone demonstrably does not.
+| acquisition rule | Text2SQL (7) | image (2) | node (6) | best-on |
+|---|---|---|---|---|
+| IG [label entropy, Hung et al.] | 3.68 | 24.88 | **9.11** | node |
+| **IG [accuracy variance, $A_\mu$]** | **3.45** | **7.36** | 10.54 | Text2SQL, image |
+| **$A_\mu$ sampled** | 3.99 | 21.11 | **9.04** | node |
+| random sampling | 3.67 | 11.03 | 10.18 | — |
+| hybrid: audit + $A_\mu$ | 3.95 | 8.89 | 10.14 | — |
+| hybrid: audit + IG | 3.99 | 16.77 | 10.32 | — |
+
+**No rule dominates, and the honest summary is conditional.**
+
+* Where the pool's consensus is badly broken (MNIST→SVHN, 94% wrong), $A_\mu$ is
+  transformative and label entropy is actively harmful. This is the regime the criterion
+  was derived for and it delivers.
+* Where the model is reasonable but not sharp (node classification), $A_\mu$'s argmax
+  overcommits and the *sampled* version is best.
+* On Text-to-SQL the spread between rules (3.45-3.99) is far smaller than the spread
+  across datasets (1.6-6.2), so the acquisition rule is second-order there.
+
+The one question from the earlier partial draft that remains open: **what discriminates
+the wins from the losses.** Pool accuracy alone does not -- sqlflow (0.424) sits between
+BIRD (0.369, big $A_\mu$ win) and spider (0.743, $A_\mu$ win) yet $A_\mu$ loses there.
+The candidate that fits every case so far is calibration of the correlation model rather
+than the strength of the correlation, which is the distinction drawn in §9 of the design
+note, but it has not been measured directly and should not be asserted.
+
+---
+
+## 7. The `(old + temp)/2` refresh, crossed with every selector
+
+`experiments/run_refresh_rule.py` — 6 cases across all three tasks, budget 20, 3 seeds.
+Reports the refreshed `beta` against the **true** pseudo-label accuracy on the target.
+
+### Recovered `beta` under `(old+temp)/2` (truth in bold)
+
+| case | **true β** | entropy | info_gain | $A_\mu$ | $A_\mu$ sampled | random |
+|---|---|---|---|---|---|---|
+| text2sql/spider | **0.767** | 0.657 | 0.657 | 0.524 | 0.559 | **0.791** |
+| text2sql/bird | **0.427** | 0.103 | 0.077 | 0.283 | 0.184 | **0.529** |
+| vision/mnist→usps | **0.887** | 0.428 | 0.447 | 0.718 | 0.572 | **0.886** |
+| vision/mnist→svhn | **0.060** | 0.105 | 0.106 | **0.053** | 0.093 | 0.088 |
+| graph/AC | **0.748** | 0.529 | 0.409 | 0.392 | 0.400 | **0.836** |
+| graph/CD | **0.677** | 0.242 | 0.144 | 0.317 | 0.244 | **0.739** |
+
+### Three findings
+
+**1. Every active selector under-estimates `beta`; random recovers it almost exactly.**
+0.791 vs 0.767, 0.886 vs 0.887, 0.836 vs 0.748. The mechanism is not the arithmetic but
+the sample: an acquisition rule picks items *because* the consensus looks doubtful there,
+so `temp_beta` on them is systematically low — and on an overruled item it is 0 by
+construction. `beta` is a raw **mean over items**, the same kind of object as the accuracy
+$\mu$, so estimating it from an adaptively selected sample is exactly the error that
+motivates probability sampling in the first place. `e` and `gamma` are *conditional*
+rates and are far less affected.
+
+**2. $A_\mu$ is less biased for `beta` than label entropy — on 4 of 6 cases.**
+bird 0.283 vs 0.103, mnist→usps 0.718 vs 0.428, graph/CD 0.317 vs 0.242. Better, but
+still biased; it does not escape the problem, only softens it.
+
+**3. The "collapse" is sometimes the correct answer, and this reverses the earlier reading.**
+On MNIST→SVHN the source split is MNIST, where `beta = 0.998`; the target is SVHN, where
+the true `beta` is **0.060**. The geometric filter moves it to 0.053 in 20 calls and scores
+**MAE 18.31**. Pooled counts — which weighs 20 target items against 3000 source items —
+keeps `beta` at 0.992 and scores **55.69**. Under severe shift the fast filter is not
+over-reacting; it is the only rule that can move far enough.
+
+| | `(old+temp)/2` | pooled counts |
+|---|---|---|
+| **adapts** | fast — 0.998 → 0.053 in 20 calls | inert — barely leaves the source value |
+| **fails when** | the sample is biased (active selection, no real shift) | the shift is large |
+| MAE, mnist→svhn + $A_\mu$ | **18.31** | 55.69 |
+| MAE, bird + $A_\mu$ | 7.61 | **5.27** |
+
+### What this implies for the design
+
+Neither refresh rule is right on its own, and the split is clean:
+
+$$
+\boxed{\text{keep } (\text{old}+\text{temp})/2 \text{ for its adaptation speed, but compute }
+\texttt{beta} \text{ from the PROBABILITY SAMPLE, not the actively chosen items.}}
+$$
+
+That is the same separation as $A_\mu$ for acquisition versus HT/IPW for the mean, applied
+one level down — and the evidence for it is that `random` + `(old+temp)/2` recovers `beta`
+to within 0.02-0.09 on every non-adversarial case while every active selector does not.
+
+### Isolating the two effects
+
+**Under $A_\mu$ selection, is `(old+temp)/2` better than pooled counts?** Wins 5 of 6.
+
+| case | true β | `(old+temp)/2` | pooled counts | Δ |
+|---|---|---|---|---|
+| text2sql/spider | 0.767 | **5.42** | 8.62 | −3.20 |
+| text2sql/bird | 0.427 | 7.61 | **5.27** | +2.34 |
+| vision/mnist→usps | 0.887 | **2.86** | 3.23 | −0.37 |
+| vision/mnist→svhn | 0.060 | **18.31** | 55.69 | **−37.38** |
+| graph/AC | 0.748 | **7.33** | 8.64 | −1.30 |
+| graph/CD | 0.677 | **12.92** | 14.99 | −2.07 |
+| **MEAN** | | **9.07** | 16.07 | −7.00 |
+| MEAN excl. svhn | | **7.23** | 8.15 | −0.92 |
+
+The single loss is BIRD, and it is the selection-bias case: the filter drags β to 0.283
+against a truth of 0.427.
+
+**Under `(old+temp)/2`, which selector?**
+
+| | entropy | info_gain | $A_\mu$ | $A_\mu$ sampled | random |
+|---|---|---|---|---|---|
+| MEAN | 14.50 | 15.09 | **9.07** | 12.97 | 12.99 |
+| MEAN excl. svhn | 7.94 | 8.15 | 7.23 | **6.26** | 7.87 |
+
+**`(old+temp)/2` + $A_\mu$ is the best pairing measured** — 9.07, against 14.50 for the
+original (entropy + same refresh) and 16.07 for ($A_\mu$ + pooled counts). The two changes
+are complementary: $A_\mu$ finds the items that move the accuracy estimate, and the fast
+filter lets the statistics actually move once they are revealed. Excluding the adversarial
+shift, $A_\mu$-sampled is best (6.26), consistent with §4.
+
+Note it is winning *despite* a biased β, not because of an accurate one — β is wrong on
+every non-adversarial case (0.524 vs 0.767; 0.392 vs 0.748).
+
+**Not yet implemented.** `LabeledStatistics.add_validated` currently folds every validated
+item into `beta`. The fix is to restrict `beta`'s update to items drawn with known
+inclusion probability (the `pilot` audit), leaving `e` and `gamma` on all of them.
