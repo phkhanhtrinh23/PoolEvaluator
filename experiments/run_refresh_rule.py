@@ -93,7 +93,7 @@ def main():
         truth_beta = float((base["pseudo_label"] == 0).mean())
         print(f"\n[{name}]  N={N}  anchor s={s:.0f}  "
               f"true pseudo-label accuracy {truth_beta:.3f}  "
-              f"source-split beta {fresh().beta:.3f}")
+              f"source-split beta {fresh().pseudo_accuracy:.3f}")
         print(f"  {'selection':20s}" + "".join(f"{r[0]:>32s}" for r in RULES))
         print(f"  {'':20s}" + "".join(f"{'beta':>14s}{'MAE':>10s}{'':>8s}" for _ in RULES))
         rows = {}
@@ -109,14 +109,14 @@ def main():
                                          ig_candidates=args.ig_candidates,
                                          ig_iters=args.ig_iters,
                                          seed=args.seed + 1000 * rep)
-                    betas.append(st.beta)
+                    betas.append(st.pseudo_accuracy)
                     maes.append(mae(out["acc"], c["true_acc"]))
                 cells.append((float(np.mean(betas)), float(np.mean(maes))))
             rows[sel] = {RULES[k][0]: dict(beta=cells[k][0], mae=cells[k][1])
                          for k in range(len(RULES))}
             print(f"  {sel:20s}" + "".join(f"{b:14.4f}{m:10.2f}{'':>8s}"
                                            for b, m in cells), flush=True)
-        payload[name] = dict(true_beta=truth_beta, source_beta=fresh().beta,
+        payload[name] = dict(true_beta=truth_beta, source_beta=fresh().pseudo_accuracy,
                              N=N, strength=s, rows=rows)
     os.makedirs(RESULTS, exist_ok=True)
     with open(args.out, "w") as h:

@@ -50,7 +50,7 @@ os.makedirs(RESULTS, exist_ok=True)
 # --------------------------------------------------------------------------- #
 #  Building the labeled statistics                                             #
 # --------------------------------------------------------------------------- #
-def build_stats(true_class_src, group, prior, gamma_mode="both_wrong",
+def build_stats(true_class_src, group, prior, gamma_mode="model_wrong",
                 update_rule="average", temp_scope="validated_all"):
     """Measure `e` and `gamma` on a labeled split.
 
@@ -97,12 +97,12 @@ def evaluate_case(name, obs, true_acc, group, prior, prior_sigma, tc_labeled,
     stats = build_stats(tc_labeled, group, prior)
     gamma_group = _group_collision(tc_labeled, group, stats)
     coll = CollisionAwareNewFormulationPoolEval(
-        cfg, gamma_group, strength, beta_init=stats.beta,
+        cfg, gamma_group, strength, beta_init=stats.pseudo_accuracy,
         beta_strength=120.0).evaluate(run, obs=obs, pseudo_out=old)
     rows["collision EM (group gamma, .tex)"] = mae(coll["acc"], true_acc)
 
     diag.update(M=M, N=N, n_labeled=int(np.asarray(tc_labeled).shape[1]),
-                alpha_strength=strength, beta_labeled=stats.beta,
+                alpha_strength=strength, beta_labeled=stats.pseudo_accuracy,
                 gamma_labeled=stats.gamma.tolist(),
                 gamma_conditional=stats.conditional_gamma().tolist(),
                 e_mean_offdiag=float(stats.e[~np.eye(M, dtype=bool)].mean()),
@@ -281,8 +281,9 @@ def _ablations(obs, true_acc, group, prior, strength, tc_labeled, budget,
     out["ABL  - e discount (votes undiscounted)"] = mae(
         run_validation(obs, stats(), prior, strength, expert=expert(),
                        use_discount=False, **common)["acc"], true_acc)
-    out["ABL  gamma mode = model_wrong"] = mae(
-        run_validation(obs, stats(gamma_mode="model_wrong"), prior, strength,
+    # model_wrong is now the DEFAULT, so the ablation is the other two readings.
+    out["ABL  gamma mode = both_wrong"] = mae(
+        run_validation(obs, stats(gamma_mode="both_wrong"), prior, strength,
                        expert=expert(), **common)["acc"], true_acc)
     out["ABL  gamma mode = pseudo_wrong"] = mae(
         run_validation(obs, stats(gamma_mode="pseudo_wrong"), prior, strength,

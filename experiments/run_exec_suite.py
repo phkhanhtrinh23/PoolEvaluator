@@ -168,7 +168,7 @@ def score(obs, tc_labeled, group, prior, prior_sigma, true_acc, budgets, seed,
     stats = build_stats(tc_labeled, group, prior)
     rows["collision EM (.tex)"] = mae(CollisionAwareNewFormulationPoolEval(
         cfg, _group_collision(tc_labeled, group, stats), strength,
-        beta_init=stats.beta, beta_strength=120.0
+        beta_init=stats.pseudo_accuracy, beta_strength=120.0
     ).evaluate(run, obs=obs, pseudo_out=old)["acc"], true_acc)
 
     rows["validated EM (no judge)"] = mae(
@@ -186,7 +186,7 @@ def score(obs, tc_labeled, group, prior, prior_sigma, true_acc, budgets, seed,
     stat = dict(e_offdiag_mean=float(e[off].mean()), e_offdiag_max=float(e[off].max()),
                 gamma_mean=float(stats.gamma.mean()),
                 gamma_conditional_mean=float(stats.conditional_gamma().mean()),
-                beta=float(stats.beta))
+                beta=float(stats.pseudo_accuracy))
     return rows, stat
 
 

@@ -107,7 +107,7 @@ def pseudo_label_quality(true_class, pseudo_label):
     return float(np.mean(np.asarray(pseudo_label) == 0))
 
 
-def gamma_counts(true_class, pseudo_label, mode="both_wrong"):
+def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
     """Raw counts behind ``gamma[j] = P(C = 0 | Z = 0)`` on a labeled split.
 
     ``C = 0`` always means "this model's prediction differs from the pseudo-label".
@@ -195,7 +195,7 @@ class LabeledStatistics:
     """
 
     def __init__(self, true_class_src, pseudo_label_src, group=None,
-                 gamma_mode="both_wrong", smoothing=1.0, update_rule="average",
+                 gamma_mode="model_wrong", smoothing=1.0, update_rule="average",
                  temp_scope="validated_all"):
         tc = np.asarray(true_class_src)
         yhat = np.asarray(pseudo_label_src)
@@ -208,16 +208,16 @@ class LabeledStatistics:
 
         self.collision_counts, self.n_labeled = wrong_collision_counts(tc)
         self.gamma_num, self.gamma_den = gamma_counts(tc, yhat, mode=gamma_mode)
-        self.beta_hits = float(np.sum(yhat == 0))
-        self.beta_total = int(tc.shape[1])
+        self.pseudo_hits = float(np.sum(yhat == 0))
+        self.pseudo_total = int(tc.shape[1])
 
         self._e = self.collision_counts / max(self.n_labeled, 1)
         self._gamma = gamma_from_counts(self.gamma_num, self.gamma_den, self.smoothing)
-        self._beta = float((self.beta_hits + self.smoothing)
-                           / (self.beta_total + 2.0 * self.smoothing))
+        self._pseudo_acc = float((self.pseudo_hits + self.smoothing)
+                                 / (self.pseudo_total + 2.0 * self.smoothing))
         self.source_e = self._e.copy()
         self.source_gamma = self._gamma.copy()
-        self.source_beta = self._beta
+        self.source_pseudo_accuracy = self._pseudo_acc
         self.records = []
         self.history = []
 
@@ -231,8 +231,17 @@ class LabeledStatistics:
         return self._gamma
 
     @property
-    def beta(self):
-        return self._beta
+    def pseudo_accuracy(self):
+        """``beta_hat``: the measured fraction of items whose pseudo-label is gold.
+
+        Deliberately NOT called ``beta``.  The model's ``beta`` is a free parameter fitted
+        by the M-step from soft posteriors, with no access to any label; this is a plain
+        count against gold on data that has labels.  They estimate the same underlying
+        quantity, which is why one seeds the other, but only this one is measured, and
+        only this one is exposed to how the validated items were chosen.  Its live job is
+        the conversion in :meth:`conditional_gamma`.
+        """
+        return self._pseudo_acc
 
     @property
     def n_validated(self):
@@ -244,7 +253,7 @@ class LabeledStatistics:
     def conditional_gamma(self):
         """``P(C = 0 | Z = 0)`` as the E-step consumes it, per :func:`gamma_to_conditional`."""
         if self.gamma_mode == "both_wrong":
-            return gamma_to_conditional(self._gamma, self._beta)
+            return gamma_to_conditional(self._gamma, self._pseudo_acc)
         return self._gamma
 
     # -- growth --------------------------------------------------------------
@@ -252,12 +261,12 @@ class LabeledStatistics:
         """Fold one expert-validated item in and refresh ``e``, ``gamma`` and ``beta``."""
         self.records.append((np.asarray(answers).copy(), int(truth),
                              int(consensus_label)))
-        temp_e, temp_gamma, temp_beta, defined = self._temp()
+        temp_e, temp_gamma, temp_pseudo, defined = self._temp()
         if self.update_rule == "average":
             self._e = 0.5 * (self._e + temp_e)
             blended = 0.5 * (self._gamma + temp_gamma)
             self._gamma = _clip(np.where(defined, blended, self._gamma))
-            self._beta = 0.5 * (self._beta + temp_beta)
+            self._pseudo_acc = 0.5 * (self._pseudo_acc + temp_pseudo)
         elif self.update_rule == "counts":
             self._pool_counts()
         else:
@@ -265,7 +274,7 @@ class LabeledStatistics:
         self.history.append(dict(n_validated=len(self.records),
                                  e_mean=float(self._e.mean()),
                                  gamma_mean=float(self._gamma.mean()),
-                                 beta=float(self._beta)))
+                                 pseudo_accuracy=float(self._pseudo_acc)))
 
     def _records(self):
         return self.records[-1:] if self.temp_scope == "latest" else self.records
@@ -317,9 +326,9 @@ class LabeledStatistics:
         self._gamma = gamma_from_counts(
             self.gamma_num + (disagree & cond).sum(axis=0),
             self.gamma_den + cond.sum(axis=0), self.smoothing)
-        self._beta = float((self.beta_hits + float(np.sum(consensus == truth))
-                            + self.smoothing)
-                           / (self.beta_total + len(recs) + 2.0 * self.smoothing))
+        self._pseudo_acc = float(
+            (self.pseudo_hits + float(np.sum(consensus == truth)) + self.smoothing)
+            / (self.pseudo_total + len(recs) + 2.0 * self.smoothing))
 
 
 # --------------------------------------------------------------------------- #
@@ -566,8 +575,8 @@ def validated_em(obs, stats, prior, prior_strength, constraints=None,
 
     init = dict(init or {})
     alpha = _clip(init.get("alpha", pi)).copy()
-    beta = float(_clip(init.get("beta", stats.beta)))
-    beta_prior = float(_clip(stats.beta))
+    beta = float(_clip(init.get("beta", stats.pseudo_accuracy)))
+    beta_prior = float(_clip(stats.pseudo_accuracy))
     beta_strength = float(beta_strength)
 
     if pseudo_mode not in ("joint", "fixed"):

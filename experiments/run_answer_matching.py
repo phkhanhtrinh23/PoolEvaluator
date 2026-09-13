@@ -250,7 +250,7 @@ def evaluate(name, pool, args, shared, log=print):
             recall=float(np.mean([x["recall"] for x in q])),
             e_offdiag=float(e[off].mean()),
             gamma=float(stats.conditional_gamma().mean()),
-            beta=float(stats.beta),
+            beta=float(stats.pseudo_accuracy),
             mae_pooleval=pe, mae_validated=vem, mae_judged=judged,
             seconds=round(time.time() - t0, 1))
         log(f"    {label:34s} clus {rows[label]['clusters']:5.2f}  "

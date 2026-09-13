@@ -426,7 +426,7 @@ def test_fixed_mode_agrees_with_correctness_em_on_the_same_agreement_matrix():
     yhat, _, _ = plan.solve(_clip(prior))
     C = (obs == yhat[None, :]).astype(float)
     direct = correctness_em(C, stats.conditional_gamma(), prior, 30.0,
-                            beta_init=stats.beta, max_iters=300)
+                            beta_init=stats.pseudo_accuracy, max_iters=300)
     assert np.allclose(joint["alpha"], direct["alpha"], atol=1e-6)
     assert joint["beta"] == pytest.approx(direct["beta"], abs=1e-6)
 
