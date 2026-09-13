@@ -573,3 +573,93 @@ MAE in accuracy points (x100), lower is better. Best per column in bold. Budgets
 | ABL  expert accuracy 0.80 | 6.76 | 11.56 | 9.20 | 10.93 | 11.10 | 6.54 | 9.35 |
 | ABL  expert accuracy 0.80, may reject all | 6.76 | 11.56 | 9.20 | 10.93 | 11.10 | 6.54 | 9.35 |
 
+
+---
+
+## 9. The anchor strength is the most consequential single knob
+
+The Beta anchor $s$ sets the exchange rate between the labeled prior and the unlabeled
+target evidence:
+
+$$\alpha_j=\frac{\sum_i \tau_i^j+s_j\pi_j}{N+s_j}.$$
+
+The prior keeps share $s/(N+s)$, which **does not vanish as $N$ grows**. Collecting more
+target items never washes out a wrong prior; only lowering $s$ does. Measured sweep:
+
+| anchor $s$ | prior share | spider (prior 3.7 pts off) | mnist→svhn (prior 85.9 pts off) |
+|---|---|---|---|
+| 0 | 0.00 | 18.05 | **57.98** |
+| $N/10$ | 0.09 | 13.86 | 59.03 |
+| $N/2$ | 0.33 | 10.58 | 68.90 |
+| $N$ | 0.50 | **8.51** | 80.18 |
+| binomial SE (120 / 3000) | 0.44 / 0.83 | 9.18 | 85.83 |
+
+**A 70-point swing from one hyper-parameter.** When the prior transfers (spider) you want
+it strong; when it does not (MNIST→SVHN, where the source prior is 85.9 accuracy points
+wrong) any anchor at all is poison and $s=0$ is right.
+
+Declaring $s$ as the binomial standard error of the labeled split — which makes $s$ equal
+that split's SIZE — asserts the source accuracy transfers with sampling-error-only
+uncertainty. Domain shift plainly violates that, and it is the same point
+`docs/ess_coverage.md` makes: the prior's *usable* effective sample size is bounded by the
+transfer term, not by how many source items were labeled. This was a live
+misconfiguration: at $s=3000$ against $N=600$, 83% of every vision estimate was a prior
+that is 86 points wrong, and every anchored method collapsed to MAE ≈ 57 while the one
+*unanchored* method scored 36.6. Now $s$ is capped at $N$, and the vision/graph ports
+declare the prior's sd the way the rest of the repo does.
+
+---
+
+## 10. Which inner loop: fixed pseudo-labels or joint?
+
+The strict reading of `Trinh_proof.tex` holds the pseudo-labels — hence `C` — fixed and
+runs EM only over $(\alpha,\beta)$. That is a genuine EM on one likelihood: its observed
+log-likelihood is monotone. The joint variant re-derives pseudo-labels each sweep, which
+is two-block coordinate ascent and guarantees nothing. Both are implemented
+(`pseudo_mode="fixed"` / `"joint"`); `"fixed"` is verified equal to wrapping the expert
+loop around `correctness_em` to $10^{-6}$.
+
+| pool | inner loop | no judge | b=40 IG | b=40 random |
+|---|---|---|---|---|
+| spider | fixed (strict `.tex`) | 9.18 | 3.20 | 2.92 |
+| spider | joint | 9.18 | 3.20 | 2.92 |
+| bird | fixed | 6.47 | 6.28 | 2.62 |
+| bird | joint | 6.63 | 6.17 | 2.62 |
+| mnist→svhn | fixed | 58.61 | **27.11** | 37.98 |
+| mnist→svhn | joint | 58.03 | 46.73 | **13.70** |
+
+**On Text-to-SQL the two are indistinguishable** — identical on spider, within 0.2 on
+bird. They diverge only where the consensus is badly broken, and neither dominates there.
+The reported tables use `"joint"`; this table is why that choice is not load-bearing.
+
+---
+
+## 11. Why label entropy fails on a broken pool
+
+Two measurements, and they explain every acquisition result in
+`docs/acquisition_results.md`.
+
+**Active selection judges unrepresentative items.** The estimand is a mean over items, so
+a deliberately non-representative sample biases it:
+
+| pool | pool accuracy | judged-item accuracy (IG) | judged-item accuracy (random) |
+|---|---|---|---|
+| spider | 0.743 | 0.440 (**bias −0.303**) | 0.642 (−0.100) |
+| mnist→svhn | 0.133 | 0.102 (−0.031) | 0.152 (+0.019) |
+
+**And on a broken pool, entropy points the wrong way entirely:**
+
+| | spider | mnist→svhn |
+|---|---|---|
+| consensus correct on | 76.7% of items | 6.0% of items |
+| mean $H(o)$ where consensus **right** | 0.059 | **0.155** |
+| mean $H(o)$ where consensus **wrong** | **0.249** | 0.104 |
+| top-40 by entropy: consensus wrong | 17/40 (base 23%) | 36/40 (base **94%**) |
+
+On spider entropy is 1.8× enriched for consensus failures and works. On SVHN it is
+*anti*-correlated: when the whole pool fails the same way it **agrees confidently**, so
+the gauge trap sits at LOW entropy and uncertainty sampling is structurally blind to it.
+
+This is the empirical case for §7b: the objective, not the idea of active selection, is
+what fails. $A_\mu$'s leverage factor sees exactly these items, and on MNIST→SVHN it beats
+label-entropy IG 13.03 vs 46.73.
