@@ -1,8 +1,14 @@
 # Acquisition: information gain about the MEAN, and design-based estimation
 
-**Status: complete.** All three tasks, 15 cases: Text-to-SQL (5 datasets, 7
+**Status: complete, re-run under the current default.** All three tasks, 15 cases: Text-to-SQL (5 datasets, 7
 case/protocol combinations), image (2 shifts), node (6 shifts). Budget 40, 5 seeds each.
 A companion experiment (§7) crosses the statistics-refresh rule against every selector.
+
+> **Re-run note.** Every table below was regenerated after `gamma_mode` changed from
+> `both_wrong` to `model_wrong` (see `docs/three_betas.md`), which removes a biased
+> conversion from the E-step and moves the underlying estimator substantially --- e.g.
+> `validated EM (no judge)` on text2sql/A went 7.91 → 3.87. Numbers here are therefore not
+> comparable with any earlier draft; §8 records what the change did to this comparison.
 
 Code: `pooleval/validated_em.py` (acquisition), `pooleval/estimators.py` (design-based
 estimators), `experiments/run_validated_em.py` (`_acquisition_block`).
@@ -34,96 +40,83 @@ because adaptive sampling without replacement leaves no clean marginal.
 
 ## 2. Text-to-SQL — COMPLETE
 
-MAE in accuracy points, budget 40, 5 seeds. `/A` = protocol A (real labeled source
-split), `/B` = protocol B (target holdout).
+MAE in accuracy points, budget 40, 5 seeds. `/A` = protocol A (real labeled source split),
+`/B` = protocol B (target holdout).
 
-| acquisition rule | spider/A | spider/B | bird/A | bird/B | sqlflow/B | minidev/B | s2local/B | **mean** |
+| acquisition rule | spider/A | bird/A | spider/B | bird/B | sqlflow/B | bird_minidev/B | spider2local/B | **mean** |
 |---|---|---|---|---|---|---|---|---|
-| IG [label entropy, Hung et al.] | 3.20 | **1.64** | 6.17 | 4.58 | 4.29 | 3.73 | 2.13 | 3.68 |
-| **IG [accuracy variance, $A_\mu$]** | **2.29** | 1.75 | **3.30** | 3.95 | 5.70 | 5.13 | **2.03** | **3.45** |
-| $A_\mu$ sampled ($\epsilon$-mixed softmax) | 4.48 | 4.63 | 4.28 | 3.23 | 4.85 | 3.84 | 2.63 | 3.99 |
-| random sampling | 5.72 | 4.58 | 3.59 | **2.74** | 3.07 | 3.82 | 2.17 | 3.67 |
-| hybrid: random audit + $A_\mu$ | 6.78 | 3.36 | **2.34** | 3.38 | 4.79 | 4.42 | 2.54 | 3.95 |
-| hybrid: random audit + IG | 6.74 | 3.31 | 5.46 | 4.65 | **2.65** | **2.57** | 2.54 | 3.99 |
+| IG [label entropy, Hung et al.] | **2.56** | 5.76 | 3.66 | 3.81 | 5.07 | 3.80 | 2.12 | 3.83 |
+| IG [accuracy variance, $A_\mu$] | 2.66 | 3.96 | 3.38 | 2.82 | 8.34 | 6.13 | **2.02** | 4.19 |
+| $A_\mu$ sampled ($\epsilon$-mixed softmax) | 3.08 | **2.54** | **2.75** | 2.37 | 7.02 | 4.44 | 2.16 | 3.48 |
+| random sampling | 3.43 | 3.10 | 3.57 | **2.05** | 5.83 | 5.73 | 2.18 | 3.70 |
+| hybrid: random audit + $A_\mu$ | 3.90 | 3.27 | 2.77 | 2.65 | 7.74 | 5.68 | 2.22 | 4.03 |
+| hybrid: random audit + IG | 3.68 | 3.50 | 2.91 | 3.12 | **3.98** | **2.99** | 2.22 | **3.20** |
 
 ### What holds up
 
-**$A_\mu$ wins on the mean, and wins big where it wins.** 3.45 vs 3.68, and on the two
-protocol-A cases — the only ones with a genuine labeled source split — it is far ahead:
-spider 2.29 vs 3.20, bird **3.30 vs 6.17**.
+**$A_\mu$ is strongest where the labeled source split is real.** On the two protocol-A
+cases it beats label-entropy IG 3.31 vs 4.16, and on BIRD/A 3.96 vs 5.76.
 
-**The BIRD margin was predicted before it was measured.** The mechanism claim is that
-$A_\mu$'s second factor $(m_1-m_0)^2$ is what sees confidently-wrong items, which label
-entropy cannot, and that a weaker pool has more of them. Spider's pool accuracy is 0.743
-and the margin 0.91; BIRD's is 0.369 and the margin **2.87**, three times larger. The
-prediction was registered in advance and it held.
+**Randomising the score is now the best Text2SQL rule on protocol A** ($A_\mu$ sampled,
+2.81) --- it was 4.38 under the old `gamma_mode`. With a better-calibrated $\gamma$ the
+ranking $A_\mu$ produces is worth sampling from rather than maximising.
 
 ### What does not
 
-**$A_\mu$ does not dominate. It wins 3 of 7 cases and loses clearly on 2** — sqlflow
-(5.70 vs 4.29) and bird_minidev (5.13 vs 3.73). The simple "weaker pool $\Rightarrow$
-bigger margin" story does **not** survive: sqlflow's pool accuracy (0.424) sits between
-BIRD's (0.369) and spider's (0.743) yet it breaks the pattern. Pool accuracy alone is not
-the discriminator, and the mechanism story is at best incomplete.
+**$A_\mu$ loses protocol B** (4.54 vs 3.69), driven by sqlflow (8.34) and bird_minidev
+(6.13). The best protocol-B rule is `hybrid: random audit + IG` at **3.05** --- the only
+rule that is never bad on any Text2SQL case.
 
-**The spread between rules is smaller than the spread between datasets.** Every rule sits
-in 3.45-3.99 on the mean while a single rule swings from 1.6 to 6.2 across datasets. On
-this evidence the acquisition rule is a second-order choice for Text-to-SQL.
-
-**The rule that never fails badly is the hybrid with entropy IG** (worst case 6.74, and
-it wins sqlflow and bird_minidev outright) -- consistent with the principle that when the
-correlation model cannot be trusted, keeping probability sampling in the design is the
-safe floor.
+**The spread between rules stays smaller than the spread between datasets.** Rules span
+3.31--4.54 on protocol B while a single rule spans 2.0--8.3 across datasets, so the
+acquisition rule remains a second-order choice here.
 
 ---
 
 ## 3. Image classification — COMPLETE
 
-| acquisition rule | mnist→usps | mnist→svhn | **mean** |
+| acquisition rule | mnist->usps | mnist->svhn | **mean** |
 |---|---|---|---|
-| IG [label entropy, Hung et al.] | 3.03 | 46.73 | 24.88 |
-| **IG [accuracy variance, $A_\mu$]** | **1.68** | **13.03** | **7.36** |
-| $A_\mu$ sampled ($\epsilon$-mixed softmax) | 2.61 | 39.61 | 21.11 |
-| random sampling | 2.32 | 19.73 | 11.03 |
-| hybrid: audit + $A_\mu$ | 3.72 | 14.06 | 8.89 |
-| hybrid: audit + IG | 2.48 | 31.06 | 16.77 |
+| IG [label entropy, Hung et al.] | **4.00** | 45.40 | 24.70 |
+| IG [accuracy variance, $A_\mu$] | 6.15 | **13.09** | **9.62** |
+| $A_\mu$ sampled ($\epsilon$-mixed softmax) | 5.38 | 36.74 | 21.06 |
+| random sampling | 6.76 | 15.90 | 11.33 |
+| hybrid: random audit + $A_\mu$ | 7.17 | 14.00 | 10.58 |
+| hybrid: random audit + IG | 5.22 | 14.31 | 9.77 |
 
-**The largest effect measured anywhere: $A_\mu$ cuts MAE by 70% (24.88 → 7.36), and on
-MNIST→SVHN by a factor of 3.6 (46.73 → 13.03).**
+**$A_\mu$ cuts MAE by 61% against label-entropy IG (24.70 → 9.62)**, and on MNIST→SVHN by
+a factor of 3.5 (45.40 → 13.09).
 
-MNIST→SVHN is the adversarial case -- the pool is 13% accurate and its consensus is wrong
-on 94% of items, so label entropy is *anti*-correlated with consensus failure and spends
-the budget on the items the consensus already gets right. An earlier note in this project
-concluded from that "random beats active selection here". That was wrong: it was Hung's
-OBJECTIVE that failed, not active selection. $A_\mu$'s leverage factor finds those items
-and beats random by 6.7 points.
+MNIST→SVHN is the adversarial case --- the pool is 13% accurate and its consensus wrong on
+94% of items, so label entropy is *anti*-correlated with consensus failure and spends the
+budget on items the consensus already gets right. An earlier draft concluded from this that
+"random beats active selection here". That was wrong: it was Hung's OBJECTIVE that failed,
+not active selection. $A_\mu$ beats random by 1.7 points and label entropy by 15.1.
 
-**Caveat on the estimators.** On MNIST→SVHN inverse-variance fusion FAILS (13.92 and
-30.82, worse than either input -- HT 5.43, model-assisted 6.21). Fusion assumes both
-inputs unbiased; the model estimate there is not, so precision-weighting imports its bias.
-On a pool that broken only the design-based estimators should be read.
+**Caveat on the estimators.** On MNIST→SVHN inverse-variance fusion fails --- worse than
+either input --- because fusion assumes both inputs unbiased and the model estimate there is
+not. On a pool that broken only the design-based estimators should be read.
 
 ---
 
 ## 4. Node classification — COMPLETE (6 shifts)
 
-| acquisition rule | AC | AD | CA | CD | DA | DC | **mean** | worst |
-|---|---|---|---|---|---|---|---|---|
-| IG [label entropy, Hung et al.] | 7.12 | 12.73 | 9.52 | 8.87 | 10.06 | **6.35** | 9.11 | 12.73 |
-| IG [accuracy variance, $A_\mu$] | 8.85 | 11.82 | 12.29 | 11.39 | 10.55 | 8.35 | 10.54 | 12.29 |
-| **$A_\mu$ sampled** | **6.19** | 12.25 | **9.15** | 8.94 | 10.99 | 6.69 | **9.04** | 12.25 |
-| random sampling | 7.85 | **11.82** | 9.68 | 11.65 | 11.36 | 8.72 | 10.18 | **11.82** |
-| hybrid: audit + $A_\mu$ | 7.43 | 12.64 | 10.47 | 11.04 | 10.76 | 8.54 | 10.14 | 12.64 |
-| hybrid: audit + IG | 7.34 | 13.42 | 10.05 | 10.55 | 11.25 | 9.28 | 10.32 | 13.42 |
+| acquisition rule | AC | AD | CA | CD | DA | DC | **mean** |
+|---|---|---|---|---|---|---|---|
+| IG [label entropy, Hung et al.] | 5.89 | 11.66 | 7.69 | 8.44 | 8.59 | **5.48** | 7.96 |
+| IG [accuracy variance, $A_\mu$] | 8.22 | 10.97 | 8.00 | 11.74 | 15.37 | 9.05 | 10.56 |
+| $A_\mu$ sampled ($\epsilon$-mixed softmax) | 7.19 | 11.11 | **7.38** | 8.73 | 10.22 | 6.60 | 8.54 |
+| random sampling | 8.24 | **8.08** | 7.54 | 7.55 | **6.48** | 10.07 | 7.99 |
+| hybrid: random audit + $A_\mu$ | 11.51 | 10.23 | 9.98 | 9.91 | 11.60 | 10.16 | 10.56 |
+| hybrid: random audit + IG | **5.45** | 9.15 | 8.53 | **6.56** | 10.80 | 6.86 | **7.89** |
 
-**This is where $A_\mu$ loses.** Deterministic $A_\mu$ is the *worst* rule (10.54) and
-label-entropy IG beats it (9.11). But **sampling the same score is the best rule** (9.04)
--- a pattern visible on the single AC shift beforehand and confirmed across all six.
+**This is where deterministic $A_\mu$ loses** --- 10.56 against 7.96 for label-entropy IG,
+worse on 5 of 6 shifts. But **sampling the same score recovers most of the gap** (8.54), and
+`hybrid: random audit + IG` is best overall (7.89).
 
-The reading: $A_\mu$'s *ranking* carries real signal on these pools while its *argmax*
+The reading: $A_\mu$'s *ranking* carries signal on these pools while its *argmax*
 overcommits. The $\epsilon$-mixed softmax introduced to satisfy the positivity condition
-turns out to double as a regulariser on a score the model cannot yet be trusted to rank
-perfectly. That is a design-based safeguard paying off for a second, unplanned reason.
+doubles as a regulariser on a score the model cannot yet be trusted to rank perfectly.
 
 ---
 
@@ -156,40 +149,45 @@ Two implementation points that are not cosmetic:
 
 ## 6. Across all three tasks
 
-| acquisition rule | Text2SQL (7) | image (2) | node (6) | best-on |
-|---|---|---|---|---|
-| IG [label entropy, Hung et al.] | 3.68 | 24.88 | **9.11** | node |
-| **IG [accuracy variance, $A_\mu$]** | **3.45** | **7.36** | 10.54 | Text2SQL, image |
-| **$A_\mu$ sampled** | 3.99 | 21.11 | **9.04** | node |
-| random sampling | 3.67 | 11.03 | 10.18 | — |
-| hybrid: audit + $A_\mu$ | 3.95 | 8.89 | 10.14 | — |
-| hybrid: audit + IG | 3.99 | 16.77 | 10.32 | — |
+| acquisition rule | Text2SQL/A (2) | Text2SQL/B (5) | image (2) | node (6) | best-on |
+|---|---|---|---|---|---|
+| IG [label entropy, Hung et al.] | 4.16 | 3.69 | 24.70 | 7.96 | — |
+| IG [accuracy variance, $A_\mu$] | 3.31 | 4.54 | **9.62** | 10.56 | image (2) |
+| $A_\mu$ sampled | **2.81** | 3.75 | 21.06 | 8.54 | Text2SQL/A (2) |
+| random sampling | 3.27 | 3.87 | 11.33 | 7.99 | — |
+| hybrid: audit + $A_\mu$ | 3.58 | 4.21 | 10.58 | 10.56 | — |
+| hybrid: audit + IG | 3.59 | **3.05** | 9.77 | **7.89** | Text2SQL/B (5), node (6) |
 
-**No rule dominates, and the honest summary is conditional.**
+**No rule dominates, and the winner changes per block.** Four rules take a block each.
 
 * Where the pool's consensus is badly broken (MNIST→SVHN, 94% wrong), $A_\mu$ is
-  transformative and label entropy is actively harmful. This is the regime the criterion
-  was derived for and it delivers.
-* Where the model is reasonable but not sharp (node classification), $A_\mu$'s argmax
-  overcommits and the *sampled* version is best.
-* On Text-to-SQL the spread between rules (3.45-3.99) is far smaller than the spread
-  across datasets (1.6-6.2), so the acquisition rule is second-order there.
+  transformative --- 9.62 against 24.70 for label entropy --- and label entropy is actively
+  harmful. This is the regime the criterion was derived for and it delivers.
+* Where the model is reasonable but not sharp (node classification, Text2SQL protocol B),
+  $A_\mu$'s argmax overcommits and either the **sampled** variant or the **hybrid with
+  label-entropy IG** is better.
+* On Text-to-SQL the spread between rules stays smaller than the spread across datasets, so
+  the acquisition rule remains second-order there.
 
-The one question from the earlier partial draft that remains open: **what discriminates
-the wins from the losses.** Pool accuracy alone does not -- sqlflow (0.424) sits between
-BIRD (0.369, big $A_\mu$ win) and spider (0.743, $A_\mu$ win) yet $A_\mu$ loses there.
-The candidate that fits every case so far is calibration of the correlation model rather
-than the strength of the correlation, which is the distinction drawn in §9 of the design
-note, but it has not been measured directly and should not be asserted.
+**Averaging across blocks is dominated by the image block**, whose scale (9.6--24.7) is an
+order of magnitude above the others (2.8--4.5). A cross-block mean would rank rules mostly
+by how they handle MNIST→SVHN, so it is deliberately not reported.
+
+**The most consistent rule is `hybrid: audit + IG`** --- best on two blocks, never worse
+than 9.77, and the only rule that is never bad on any Text2SQL case. That is the design
+keeping a known-$\pi$ audit in reserve, which is what makes it robust when the correlation
+model cannot be trusted.
 
 ---
 
 ## 7. The `(old + temp)/2` refresh, crossed with every selector
 
 `experiments/run_refresh_rule.py` — 6 cases across all three tasks, budget 20, 3 seeds.
-Reports the refreshed `beta` against the **true** pseudo-label accuracy on the target.
+Reports the refreshed measured pseudo-label accuracy (`LabeledStatistics.pseudo_accuracy`,
+written $\hat\beta_{\text{meas}}$ --- **not** the M-step $\beta$, see `docs/three_betas.md`)
+against the true value on the target.
 
-### Recovered `beta` under `(old+temp)/2` (truth in bold)
+### Recovered $\hat\beta_{\text{meas}}$ under `(old+temp)/2` (truth in bold)
 
 | case | **true β** | entropy | info_gain | $A_\mu$ | $A_\mu$ sampled | random |
 |---|---|---|---|---|---|---|
@@ -202,16 +200,16 @@ Reports the refreshed `beta` against the **true** pseudo-label accuracy on the t
 
 ### Three findings
 
-**1. Every active selector under-estimates `beta`; random recovers it almost exactly.**
+**1. Every active selector under-estimates $\hat\beta_{\text{meas}}$; random recovers it almost exactly.**
 0.791 vs 0.767, 0.886 vs 0.887, 0.836 vs 0.748. The mechanism is not the arithmetic but
 the sample: an acquisition rule picks items *because* the consensus looks doubtful there,
 so `temp_beta` on them is systematically low — and on an overruled item it is 0 by
-construction. `beta` is a raw **mean over items**, the same kind of object as the accuracy
-$\mu$, so estimating it from an adaptively selected sample is exactly the error that
+construction. $\hat\beta_{\text{meas}}$ is a raw **mean over items**, the same kind of object as the
+accuracy $\mu$, so estimating it from an adaptively selected sample is exactly the error that
 motivates probability sampling in the first place. `e` and `gamma` are *conditional*
 rates and are far less affected.
 
-**2. $A_\mu$ is less biased for `beta` than label entropy — on 4 of 6 cases.**
+**2. $A_\mu$ is less biased for $\hat\beta_{\text{meas}}$ than label entropy — on 4 of 6 cases.**
 bird 0.283 vs 0.103, mnist→usps 0.718 vs 0.428, graph/CD 0.317 vs 0.242. Better, but
 still biased; it does not escape the problem, only softens it.
 
@@ -277,5 +275,56 @@ Note it is winning *despite* a biased β, not because of an accurate one — β 
 every non-adversarial case (0.524 vs 0.767; 0.392 vs 0.748).
 
 **Not yet implemented.** `LabeledStatistics.add_validated` currently folds every validated
-item into `beta`. The fix is to restrict `beta`'s update to items drawn with known
+item into `pseudo_accuracy`. The fix is to restrict `beta`'s update to items drawn with known
 inclusion probability (the `pilot` audit), leaving `e` and `gamma` on all of them.
+
+---
+
+## 8. What the `gamma_mode` change did to this comparison
+
+Every table above was regenerated after `gamma_mode` changed from `both_wrong` to
+`model_wrong`. That change is about the E-step, not about acquisition, but it moves the
+model the acquisition rules are scoring, so the comparison shifts with it.
+
+| acquisition rule | Text2SQL/A | Text2SQL/B | image | node |
+|---|---|---|---|---|
+| IG [label entropy] | 4.68 → 4.16 (-0.52) | 3.27 → 3.69 (+0.42) | 24.88 → 24.70 (-0.18) | 9.11 → 7.96 (-1.15) |
+| IG [$A_\mu$] | 2.79 → 3.31 (+0.52) | 3.71 → 4.54 (+0.83) | 7.36 → 9.62 (+2.26) | 10.54 → 10.56 (+0.02) |
+| $A_\mu$ sampled | 4.38 → 2.81 (-1.57) | 3.84 → 3.75 (-0.09) | 21.11 → 21.06 (-0.04) | 9.04 → 8.54 (-0.50) |
+| random | 4.66 → 3.27 (-1.39) | 3.28 → 3.87 (+0.59) | 11.03 → 11.33 (+0.30) | 10.18 → 7.99 (-2.19) |
+
+**The gap between $A_\mu$ and label-entropy IG narrowed where the model got better
+calibrated.** On Text2SQL/A the lead went from 1.89 points to 0.85; on image from 17.5 to
+15.1. This was predicted before the re-run and it held: the two fixes were partly addressing
+the same underlying miscalibration, so they do not simply add.
+
+$A_\mu$'s leverage factor $(m_1-m_0)^2$ finds items where the model would be moved a lot by
+the truth --- which includes items where the model is *wrong* about $\gamma$. Removing the
+biased conversion removes some of that wrongness, so there is less for $A_\mu$ to exploit.
+The criterion is therefore worth most exactly where the model is least trustworthy, which is
+consistent with it remaining transformative on MNIST→SVHN (the one block where the estimator
+still fails badly) and second-order on Text2SQL.
+
+**Randomised selection gained where deterministic $A_\mu$ lost.** $A_\mu$ sampled improved
+on Text2SQL/A (4.38 → 2.81) and node (9.04 → 8.54) while deterministic $A_\mu$ got worse on
+both. With a better-calibrated model the ranking is more trustworthy than the argmax ---
+which is the same conclusion §4 reaches from the node shifts alone.
+
+---
+
+## 9. Which `gamma_mode` for the headline?
+
+§8 shows deterministic $A_\mu$ is the only rule that got *worse* when `gamma_mode` flipped
+to `model_wrong` --- on all four blocks. Since the judge loop with $A_\mu$ is the headline
+configuration, that comparison was run on its own: 15 cases (every case available), both
+modes, both $A_\mu$ variants, budgets 10/20/40, 5 seeds.
+
+| selector | mean $\Delta$ (model_wrong − both_wrong) | model_wrong better in |
+|---|---|---|
+| $A_\mu$ (deterministic) | **+0.93** | 20/45 cells |
+| $A_\mu$ sampled | **−0.03** | 27/45 cells |
+
+`both_wrong` wins for the argmax by 0.93 and the sampled variant is indifferent. The margin
+is concentrated in the vision block, does not shrink with budget (contradicting the proposed
+mechanism), and buys that 0.93 at the cost of a conversion measured to be biased by
+0.28--0.47 on all ten labeled splits. Full analysis: `docs/gamma_mode_headline.md`.
