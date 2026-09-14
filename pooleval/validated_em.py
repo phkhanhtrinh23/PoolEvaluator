@@ -148,6 +148,40 @@ def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
     return (disagree & cond).sum(axis=1).astype(float), cond.sum(axis=1).astype(float)
 
 
+def pairwise_wrong_counts(true_class):
+    """Counts behind the PAIRWISE route to ``P(C = 1 | Z = 0)``.
+
+    Returns ``(same, wrong)`` where ``same[j, k]`` counts items on which ``j`` and ``k``
+    gave the same answer and ``j`` was wrong, and ``wrong[j]`` counts items ``j`` got
+    wrong.  Note ``r^j = r^k`` with ``j`` wrong forces ``k`` wrong too, so no separate
+    both-wrong condition is needed -- which is exactly why this conditioning needs no
+    ``beta`` correction.  The diagonal satisfies ``same[j, j] = wrong[j]``, i.e. a
+    classifier always agrees with itself, and that term belongs: if ``j``'s own answer is
+    the pseudo-label then ``C = 1`` with certainty.
+    """
+    tc = np.asarray(true_class)
+    wrong = tc != 0                                        # [M, N]
+    same = (tc[:, None, :] == tc[None, :, :]) & wrong[:, None, :]
+    return same.sum(axis=2).astype(float), wrong.sum(axis=1).astype(float)
+
+
+def gamma_from_pairwise(same, wrong, smoothing=1.0):
+    """``gamma_j = 1 - mean_k P(r^j = r^k | r^j wrong)`` -- the row functional of the
+    correlated-error matrix, averaged over classifiers INCLUDING ``j`` itself.
+
+    Unlike the counted route this is invariant to the EM state: it is a function of the
+    answers and the gold labels only, never of ``alpha`` or of the pseudo-labels those
+    imply.  The cost is a systematic downward bias in ``P(C = 1 | Z = 0)`` -- the
+    pseudo-label is the WINNER of a weighted vote, so agreeing with it is agreeing with
+    the modal wrong answer, while a row mean asks about a typical one.
+    """
+    same = np.asarray(same, dtype=float)
+    wrong = np.asarray(wrong, dtype=float)
+    M = same.shape[0]
+    agree = (same + smoothing) / (wrong[:, None] + 2.0 * smoothing)
+    return _clip(1.0 - agree.mean(axis=1))
+
+
 def gamma_from_counts(numerator, denominator, smoothing=1.0):
     """Laplace-smoothed ``gamma``; a model with no eligible labeled item falls back to 1/2."""
     numerator = np.asarray(numerator, dtype=float)
@@ -207,12 +241,19 @@ class LabeledStatistics:
         self.temp_scope = temp_scope
 
         self.collision_counts, self.n_labeled = wrong_collision_counts(tc)
-        self.gamma_num, self.gamma_den = gamma_counts(tc, yhat, mode=gamma_mode)
+        if gamma_mode in ("pairwise", "pairwise_calibrated"):
+            self.pair_same, self.pair_wrong = pairwise_wrong_counts(tc)
+            self.gamma_num, self.gamma_den = gamma_counts(tc, yhat, mode="model_wrong")
+        else:
+            self.pair_same = self.pair_wrong = None
+            self.gamma_num, self.gamma_den = gamma_counts(tc, yhat, mode=gamma_mode)
         self.pseudo_hits = float(np.sum(yhat == 0))
         self.pseudo_total = int(tc.shape[1])
 
         self._e = self.collision_counts / max(self.n_labeled, 1)
-        self._gamma = gamma_from_counts(self.gamma_num, self.gamma_den, self.smoothing)
+        self._gamma = (gamma_from_pairwise(self.pair_same, self.pair_wrong, self.smoothing)
+                       if gamma_mode in ("pairwise", "pairwise_calibrated")
+                       else gamma_from_counts(self.gamma_num, self.gamma_den, self.smoothing))
         self._pseudo_acc = float((self.pseudo_hits + self.smoothing)
                                  / (self.pseudo_total + 2.0 * self.smoothing))
         self.source_e = self._e.copy()
@@ -229,6 +270,10 @@ class LabeledStatistics:
     @property
     def gamma(self):
         return self._gamma
+
+    def _pair_gamma(self):
+        """The uncalibrated pairwise row functional, from the running pair counts."""
+        return gamma_from_pairwise(self.pair_same, self.pair_wrong, self.smoothing)
 
     @property
     def pseudo_accuracy(self):
@@ -254,7 +299,7 @@ class LabeledStatistics:
         """``P(C = 0 | Z = 0)`` as the E-step consumes it, per :func:`gamma_to_conditional`."""
         if self.gamma_mode == "both_wrong":
             return gamma_to_conditional(self._gamma, self._pseudo_acc)
-        return self._gamma
+        return self._gamma          # model_wrong and pairwise are already P(C=0|Z=0)
 
     # -- growth --------------------------------------------------------------
     def add_validated(self, answers, truth, consensus_label):
@@ -301,7 +346,32 @@ class LabeledStatistics:
             cond = np.broadcast_to(pseudo_wrong, wrong.shape)
         num = (disagree & cond).sum(axis=0).astype(float)
         den = cond.sum(axis=0).astype(float)
-        temp_gamma = gamma_from_counts(num, den, self.smoothing)
+        if self.gamma_mode == "pairwise":
+            # same row functional, recomputed on the validated items alone
+            ps = (answers[:, :, None] == answers[:, None, :]) & wrong[:, :, None]
+            temp_gamma = gamma_from_pairwise(ps.sum(axis=0).astype(float),
+                                             wrong.sum(axis=0).astype(float),
+                                             self.smoothing)
+            den = wrong.sum(axis=0).astype(float)
+        elif self.gamma_mode == "pairwise_calibrated":
+            # Same rule as every other statistic here: temp is computed on the
+            # EXPERT-VALIDATED ITEMS ALONE, then blended (old + temp) / 2.
+            #
+            # The pairwise row functional on those items supplies the SHAPE -- which
+            # classifier disagrees more than which -- because it recovers the ordering
+            # well (correlation ~0.9-0.98 with truth). Its LEVEL is biased, because the
+            # pseudo-label is the winner of a weighted vote while a row mean asks about a
+            # typical classifier, so the level is taken from the directly-counted rate on
+            # the same items, where the expert's answer serves as truth.
+            ps = (answers[:, :, None] == answers[:, None, :]) & wrong[:, :, None]
+            shape = gamma_from_pairwise(ps.sum(axis=0).astype(float),
+                                        wrong.sum(axis=0).astype(float), self.smoothing)
+            level = gamma_from_counts((disagree & wrong).sum(axis=0).astype(float),
+                                      wrong.sum(axis=0).astype(float), self.smoothing)
+            temp_gamma = _clip(shape + (float(np.mean(level)) - float(np.mean(shape))))
+            den = wrong.sum(axis=0).astype(float)
+        else:
+            temp_gamma = gamma_from_counts(num, den, self.smoothing)
         return temp_e, temp_gamma, float(np.mean(consensus == truth)), den > 0
 
     def _pool_counts(self):
