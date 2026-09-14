@@ -561,3 +561,81 @@ def test_sampled_selection_records_a_positive_probability_for_every_pick():
                          max_iters=40, warm_iters=20)
     assert len(out["inclusion"]) == 6
     assert all(0.0 < p <= 1.0 for p in out["inclusion"].values())
+
+
+# --------------------------------------------------------------------------- #
+#  The pairwise route to P(C=0|Z=0)                                            #
+# --------------------------------------------------------------------------- #
+def test_pairwise_counts_put_the_classifier_itself_on_the_diagonal():
+    """A classifier always agrees with itself, so same[j,j] == wrong[j]. That term
+    belongs: if j's own answer IS the pseudo-label then C=1 with certainty."""
+    from pooleval.validated_em import pairwise_wrong_counts
+    tc = np.array([[0, 1, 2], [1, 1, 0]])
+    same, wrong = pairwise_wrong_counts(tc)
+    assert np.allclose(np.diag(same), wrong)
+    assert wrong[0] == 2 and wrong[1] == 2          # j=0 wrong on i1,i2; j=1 on i0,i1
+    assert same[0, 1] == 1                          # they share the wrong answer 1 at i1
+
+
+def test_pairwise_needs_no_both_wrong_condition():
+    """r^j = r^k with j wrong forces k wrong too, which is why this conditioning needs
+    no beta correction."""
+    from pooleval.validated_em import pairwise_wrong_counts
+    tc = np.array([[5, 0], [5, 3]])
+    same, _ = pairwise_wrong_counts(tc)
+    assert same[0, 1] == 1        # i0: both gave 5, both wrong -- counted
+    assert same[1, 0] == 1        # symmetric here because both are wrong at i0
+
+
+def test_pairwise_gamma_is_one_minus_the_row_mean_agreement():
+    from pooleval.validated_em import gamma_from_pairwise
+    same = np.array([[4.0, 2.0], [2.0, 4.0]])
+    wrong = np.array([4.0, 4.0])
+    g = gamma_from_pairwise(same, wrong, smoothing=0.0)
+    assert g[0] == pytest.approx(1.0 - np.mean([4 / 4, 2 / 4]))
+
+
+def test_pairwise_gamma_does_not_depend_on_the_pseudo_labels():
+    """The structural property that motivates it: invariant to the EM state, because it
+    is a function of (answers, gold) only."""
+    rng = np.random.default_rng(30)
+    tc = rng.integers(0, 3, size=(5, 40))
+    a = LabeledStatistics(tc, rng.integers(0, 3, size=40), gamma_mode="pairwise")
+    b = LabeledStatistics(tc, rng.integers(0, 3, size=40), gamma_mode="pairwise")
+    assert np.allclose(a.gamma, b.gamma)
+    # the counted route DOES move when the pseudo-labels move
+    c = LabeledStatistics(tc, np.zeros(40, dtype=int), gamma_mode="model_wrong")
+    d = LabeledStatistics(tc, np.ones(40, dtype=int), gamma_mode="model_wrong")
+    assert not np.allclose(c.gamma, d.gamma)
+
+
+def test_pairwise_needs_no_conversion():
+    rng = np.random.default_rng(31)
+    tc = rng.integers(0, 3, size=(4, 30))
+    st = LabeledStatistics(tc, rng.integers(0, 3, size=30), gamma_mode="pairwise")
+    assert np.allclose(st.conditional_gamma(), st.gamma)
+
+
+def test_pairwise_refreshes_with_validated_items():
+    tc = np.array([[0, 1], [1, 1], [0, 0]])
+    st = LabeledStatistics(tc, np.array([0, 1]), group=np.array([0, 0, 1]),
+                           gamma_mode="pairwise")
+    before = st.gamma.copy()
+    st.add_validated(np.array([5, 5, 7]), truth=7, consensus_label=5)
+    assert not np.allclose(st.gamma, before)
+    assert np.all((st.gamma > 0) & (st.gamma < 1))
+
+
+def test_all_three_modes_run_end_to_end():
+    rng = np.random.default_rng(32)
+    M, N = 5, 25
+    true_class = rng.integers(0, 3, size=(M, N))
+    for mode in ("model_wrong", "both_wrong", "pairwise"):
+        st = LabeledStatistics(_toy_stats(M, seed=13).obs if False else
+                               rng.integers(0, 3, size=(M, 40)),
+                               rng.integers(0, 3, size=40), gamma_mode=mode)
+        out = run_validation(true_class.copy(), st, np.full(M, 0.6), 20.0,
+                             expert=OracleExpert(true_class), budget=4,
+                             select="entropy", max_iters=40, warm_iters=20)
+        assert out["expert_calls"] == 4
+        assert np.all((out["acc"] > 0) & (out["acc"] < 1)), mode
