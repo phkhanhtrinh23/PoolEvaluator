@@ -262,6 +262,75 @@ class LabeledStatistics:
         self.records = []
         self.history = []
 
+    @classmethod
+    def random(cls, M, group=None, seed=None, gamma_mode="model_wrong",
+               pi_range=(0.05, 0.95), e_off=(0.0, 0.5), e_diag=(0.0, 0.8), **kw):
+        """Starting statistics drawn at random, with NO labeled split.
+
+        Every value this class normally measures -- ``e``, ``gamma``, ``pseudo_accuracy``
+        -- comes from one artifact: the M models run over a labeled subset.  That run is
+        what costs money and latency at deployment, so the real question is not which
+        prior to compute but whether to pay for the subset at all.  This constructor is
+        the "don't pay" option.
+
+        What it costs, measured (``docs/random_init.md``, MAE in accuracy points, mean
+        over six cases, ten draws):
+
+        ================  =====  =====
+        randomised        b0     b40
+        ================  =====  =====
+        beta              +0.03  +0.32
+        e                 +0.20  -0.16
+        gamma             +4.45  +0.25
+        ================  =====  =====
+
+        ``beta`` is free because its closed-form M-step has a unique maximiser and reaches
+        it from any start; ``e`` is nearly free because it only reweights votes through a
+        bounded monotone discount and rarely changes which answer wins; ``gamma`` costs
+        real accuracy at the start but the expert loop's ``(old + temp) / 2`` blend repairs
+        it within forty labels, since EM never touches it and so every point of that
+        recovery is attributable to validation.
+
+        The one prior that does NOT recover is the anchor on ``alpha``, which is not held
+        here -- it is the ``prior`` / ``prior_strength`` pair passed to :func:`validated_em`.
+        Randomising that costs ~9.8 points at b0 and still ~2.7 at b40.  It is also a
+        per-model mean, so it needs far fewer labeled items than the M x M ``e``: a few
+        hundred is enough.  The cheap-but-good deployment mode is therefore a small subset
+        spent on ``alpha`` alone, with this constructor supplying the rest.
+
+        One caveat that cuts the other way: on both vision cases a random anchor BEAT the
+        measured one, because the labeled split was distribution-shifted from the target
+        pool.  A measured prior is only worth its cost when the subset resembles the data
+        being evaluated; under shift the free option is also the more accurate one.
+        """
+        rng = np.random.default_rng(seed)
+        tc = np.zeros((int(M), 1), dtype=int)
+        self = cls(tc, np.zeros(1, dtype=int), group=group, gamma_mode=gamma_mode, **kw)
+
+        # Erase the dummy evidence so ``update_rule="counts"`` pools the validated items
+        # into an empty prior rather than into a fabricated all-correct item.
+        self.n_labeled = 0
+        self.collision_counts = np.zeros((self.M, self.M), dtype=float)
+        self.gamma_num = np.zeros(self.M, dtype=float)
+        self.gamma_den = np.zeros(self.M, dtype=float)
+        if self.pair_same is not None:
+            self.pair_same = np.zeros((self.M, self.M), dtype=float)
+            self.pair_wrong = np.zeros((self.M, self.M), dtype=float)
+        self.pseudo_hits, self.pseudo_total = 0.0, 0
+
+        lo, hi = pi_range
+        self._gamma = rng.uniform(lo, hi, size=self.M)
+        self._pseudo_acc = float(rng.uniform(lo, hi))
+        a = rng.uniform(e_off[0], e_off[1], size=(self.M, self.M))
+        a = (a + a.T) / 2.0
+        np.fill_diagonal(a, rng.uniform(e_diag[0], e_diag[1], size=self.M))
+        self._e = a
+
+        self.source_e = self._e.copy()
+        self.source_gamma = self._gamma.copy()
+        self.source_pseudo_accuracy = self._pseudo_acc
+        return self
+
     # -- current values ------------------------------------------------------
     @property
     def e(self):
