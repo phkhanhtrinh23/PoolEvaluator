@@ -639,3 +639,64 @@ def test_all_three_modes_run_end_to_end():
                              select="entropy", max_iters=40, warm_iters=20)
         assert out["expert_calls"] == 4
         assert np.all((out["acc"] > 0) & (out["acc"] < 1)), mode
+
+
+# ---------------------------------------------------------------------------
+# LabeledStatistics.random -- the "no labeled split" deployment mode
+# ---------------------------------------------------------------------------
+
+def test_random_stats_carry_no_labeled_evidence():
+    """The dummy item used to reach the constructor must leave no trace, or the counts
+    update rule would pool validated items into a fabricated all-correct observation."""
+    st = LabeledStatistics.random(7, seed=0)
+    assert st.n_labeled == 0
+    assert st.collision_counts.sum() == 0
+    assert st.gamma_den.sum() == 0 and st.gamma_num.sum() == 0
+    assert st.pseudo_total == 0 and st.pseudo_hits == 0
+
+
+def test_random_stats_shapes_and_ranges():
+    st = LabeledStatistics.random(5, seed=1)
+    assert st.gamma.shape == (5,) and st.e.shape == (5, 5)
+    assert np.allclose(st.e, st.e.T)
+    assert np.all((st.gamma > 0) & (st.gamma < 1))
+    assert 0.0 < st.pseudo_accuracy < 1.0
+
+
+def test_random_stats_seed_is_reproducible_and_varies():
+    a, b = LabeledStatistics.random(5, seed=3), LabeledStatistics.random(5, seed=3)
+    assert np.allclose(a.gamma, b.gamma) and np.allclose(a.e, b.e)
+    assert not np.allclose(a.gamma, LabeledStatistics.random(5, seed=4).gamma)
+
+
+@pytest.mark.parametrize("mode", ["model_wrong", "both_wrong", "pseudo_wrong",
+                                  "pairwise", "pairwise_calibrated"])
+def test_random_stats_supports_every_gamma_mode(mode):
+    st = LabeledStatistics.random(4, seed=2, gamma_mode=mode)
+    g = st.conditional_gamma()
+    assert g.shape == (4,) and np.all(np.isfinite(g))
+
+
+def test_random_stats_drive_em_and_validation_end_to_end():
+    rng = np.random.default_rng(0)
+    obs = (rng.random((6, 120)) < 0.3).astype(int)
+    st = LabeledStatistics.random(6, seed=0)
+    out = validated_em(obs, st, np.full(6, 0.5), 0.0, max_iters=100)
+    assert out["acc"].shape == (6,) and np.all(np.isfinite(out["acc"]))
+    res = run_validation(obs, LabeledStatistics.random(6, seed=0), np.full(6, 0.5), 0.0,
+                         expert=OracleExpert(obs, allow_none=True), budget=5,
+                         select="mean_gain", seed=0)
+    assert res["acc"].shape == (6,) and st.n_validated == 0
+
+
+def test_random_stats_expert_updates_still_blend():
+    """gamma is never touched by EM, so validation must be what moves it."""
+    rng = np.random.default_rng(1)
+    obs = (rng.random((5, 150)) < 0.25).astype(int)
+    st = LabeledStatistics.random(5, seed=7)
+    before = st.gamma.copy()
+    run_validation(obs, st, np.full(5, 0.5), 0.0,
+                   expert=OracleExpert(obs, allow_none=True), budget=20,
+                   select="mean_gain", seed=0)
+    assert st.n_validated > 0
+    assert not np.allclose(before, st.gamma)
