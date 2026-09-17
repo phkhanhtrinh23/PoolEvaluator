@@ -3,9 +3,10 @@
 Answering four questions, in order:
 
 1. What is $\hat\beta$?
-2. Does the formula for $\gamma$ contain $\hat\beta$?
-3. Why not just use $\beta$?
-4. Why do we need $\hat\beta$ at all?
+2. Which $\gamma$ are we talking about? (`Trinh_proof.tex` defines two, and renames the symbol)
+3. Does the formula for $\gamma$ contain $\hat\beta$?
+4. Why not just use $\beta$?
+5. Why do we need $\hat\beta$ at all?
 
 Cross-references: `docs/three_betas.md` (the full three-way split), `Trinh_proof.tex`
 §"Redefining $\gamma$" (line 3319).
@@ -71,7 +72,106 @@ $\hat\beta \leftarrow \tfrac12(\hat\beta + \text{temp})$.
 
 ---
 
-## 2. Does the formula for $\gamma$ contain $\hat\beta$?
+## 2. Which $\gamma$? `Trinh_proof.tex` defines two of them
+
+This is a genuine trap in the document, and it is worth stating plainly before going
+further: **the symbol $\gamma$ means two different things in two different parts of
+`Trinh_proof.tex`, and one is close to the complement of the other.**
+
+### 2a. The original $\gamma$ — an AGREEMENT probability (§ The Collision Probability, line 2090)
+
+> "$\gamma_{g(j)}$ … the probability that a wrong model and a wrong pseudo-label produce the
+> **same** wrong answer."
+
+So the original $\gamma$ is the chance that the model's answer **collides with** — i.e.
+*agrees with* — the pseudo-label, conditional on both being wrong. Write it
+$\gamma_j^{\text{collision}}$:
+
+$$
+\gamma_j^{\text{collision}}
+\;=\;
+P\big(r_i^j = \hat y_i \;\big|\; r_i^j \ne y_i \;\wedge\; \hat y_i \ne y_i\big)
+$$
+
+Under this definition the quantity the E-step actually consumes is **not** $\gamma$ itself but
+
+$$
+d_j(\beta) \;=\; P\big(C_i^j = 0 \mid Z_i^j = 0\big) \;=\; 1-(1-\beta)\,\gamma_j^{\text{collision}} ,
+$$
+
+and note the problem the document then goes on to solve: $d_j$ is a **function of the free
+parameter $\beta$**. That is the dependence §4 below shows must be removed.
+
+### 2b. The redefined $\gamma$ — a DISAGREEMENT probability (§ Redefining $\gamma$, line 3319)
+
+The document then explicitly reuses the symbol. Its own words:
+
+> "The symbol $\gamma_j$ is retained, but it now names a *different quantity*."
+
+$$
+\boxed{\;
+\gamma_j
+\;=\;
+P\big(C_i^j = 0 \mid Z_i^j = 0\big)
+\;=\;
+P\big(r_i^j \ne \hat y_i \;\big|\; r_i^j \ne y_i\big)
+\;}
+$$
+
+That is **disagreement**, and the conditioning is on the model being wrong *alone* — nothing
+is assumed about the pseudo-label. The whole point of the redefinition is that $\gamma$ now
+**is** the probability the E-step consumes, instead of being an ingredient from which that
+probability has to be built. The two $Z=0$ branches become simply
+
+$$
+P\big(C_i^j = 1 \mid Z_i^j = 0\big) = 1-\gamma_j,
+\qquad
+P\big(C_i^j = 0 \mid Z_i^j = 0\big) = \gamma_j ,
+$$
+
+with no $\beta$ in sight. **This is the $\gamma$ the code implements**, and the one meant
+everywhere else in this file and in `docs/three_betas.md`. `gamma_counts` returns
+`(disagree & cond).sum() / cond.sum()` — a disagreement ratio.
+
+### 2c. How the two are related
+
+$$
+\gamma_j^{\text{both}} = 1-\gamma_j^{\text{collision}},
+\qquad
+\gamma_j^{\text{model}} = \hat\beta + (1-\hat\beta)\,\gamma_j^{\text{both}}
+= 1-(1-\hat\beta)\,\gamma_j^{\text{collision}} = d_j(\hat\beta) .
+$$
+
+So all three names describe the same underlying evidence at different levels of
+decomposition. `both_wrong` is the middle level; `collision` is its complement; `model_wrong`
+is the fully marginalised level that the E-step wants.
+
+### 2d. And no — none of them is $\hat\beta$
+
+It is worth being explicit, because the two quantities do touch each other through the
+conversion in §2c and that makes them easy to conflate:
+
+| | quantity | it is a statement about … | shape |
+|---|---|---|---|
+| $\hat\beta$ | $P(\hat y_i = y_i)$ | **is the pseudo-label correct?** | scalar |
+| $\gamma_j^{\text{collision}}$ | $P(r_i^j = \hat y_i \mid \text{both wrong})$ | does model $j$ **agree**? | vector, $M$ |
+| $\gamma_j$ (redefined) | $P(r_i^j \ne \hat y_i \mid r_i^j \ne y_i)$ | does model $j$ **disagree**? | vector, $M$ |
+
+$\hat\beta$ says nothing about any individual model — it is one number describing the vote's
+correctness. $\gamma$ says nothing about whether the vote is correct — it is $M$ numbers
+describing each model's relationship to the vote. $\beta$ is an *ingredient* of $\gamma$ under
+`both_wrong`, and not even that under the `model_wrong` default.
+
+### 2e. A cleanup worth doing
+
+Reusing one symbol for two quantities is the source of this whole confusion. The fix is a
+rename pass over `Trinh_proof.tex`: call the § Collision Probability one
+$\gamma^{\text{coll}}$ throughout and reserve plain $\gamma$ for the redefined quantity. Not
+done yet — flagged here so it is not forgotten.
+
+---
+
+## 3. Does the formula for $\gamma$ contain $\hat\beta$?
 
 **It depends on the mode, and under the default the answer is no.**
 
@@ -145,7 +245,7 @@ precisely a way of not paying it.
 
 ---
 
-## 3. Why not just use $\beta$?
+## 4. Why not just use $\beta$?
 
 Because **$\beta$ is a variable being optimised, and $\gamma$ has to be a constant while that
 optimisation happens.** Three separate reasons, each sufficient on its own.
@@ -233,12 +333,12 @@ is supposed to be evidence.
 
 ---
 
-## 4. So why do we need $\hat\beta$ at all?
+## 5. So why do we need $\hat\beta$ at all?
 
 $\hat\beta$ is **not a model parameter and is never reported as a result.** It has exactly
 three jobs, all of them plumbing:
 
-**(a) The conversion, under `both_wrong` only.** As derived in §2. This is the job that gave
+**(a) The conversion, under `both_wrong` only.** As derived in §3. This is the job that gave
 it its name, and it disappears under the default mode.
 
 **(b) The starting value of the EM $\beta$.** EM needs somewhere to begin:
@@ -283,11 +383,15 @@ one fewer measured constant to be transported across a domain shift.
 
 ## One-paragraph summary
 
-$\hat\beta$ is the pseudo-label accuracy **counted** on gold-labeled data; $\beta$ is the same
-quantity **inferred** by EM without gold labels. $\gamma_j$ is a per-model disagreement rate
-that the E-step consumes as a constant. Under the default `model_wrong` mode $\gamma$'s
-formula contains no $\beta$ of any kind. Under `both_wrong` it contains $\hat\beta$, and it
-must be $\hat\beta$ rather than $\beta$ because a $\gamma$ that moved with the live $\beta$
-would make the $\beta$ M-step a polynomial root-find instead of a ratio of counts, and would
-close a circular dependency $\beta\to\gamma\to\tau\to\beta$ that ordinary EM has no way to
-resolve.
+`Trinh_proof.tex` uses $\gamma$ for two different quantities: the original one (§ The
+Collision Probability) is an **agreement** rate, $P(r^j = \hat y \mid \text{both wrong})$, and
+the redefined one (§ Redefining $\gamma$) is a **disagreement** rate,
+$P(r^j \ne \hat y \mid r^j \ne y)$. The code implements the second. Separately, $\hat\beta$
+is the pseudo-label accuracy **counted** on gold-labeled data, while $\beta$ is that same
+quantity **inferred** by EM without gold labels — and neither is $\gamma$, because $\hat\beta$
+is one scalar about whether the vote is right while $\gamma$ is $M$ numbers about how each
+model relates to the vote. Under the default `model_wrong` mode $\gamma$'s formula contains no
+$\beta$ of any kind. Under `both_wrong` it contains $\hat\beta$, and it must be $\hat\beta$
+rather than $\beta$ because a $\gamma$ that moved with the live $\beta$ would make the
+$\beta$ M-step a polynomial root-find instead of a ratio of counts, and would close a circular
+dependency $\beta\to\gamma\to\tau\to\beta$ that ordinary EM has no way to resolve.
