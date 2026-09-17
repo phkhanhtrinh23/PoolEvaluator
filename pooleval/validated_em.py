@@ -145,7 +145,7 @@ def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
     disagree = tc != yhat[None, :]                     # C = 0
     model_wrong = tc != 0
     pseudo_wrong = np.broadcast_to(yhat != 0, tc.shape)
-    if mode in ("both_wrong", "collision"):
+    if mode in ("both_wrong", "collision", "collision_frozen"):
         cond = model_wrong & pseudo_wrong
     elif mode == "model_wrong":
         cond = model_wrong
@@ -153,7 +153,8 @@ def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
         cond = pseudo_wrong
     else:
         raise ValueError(f"unknown gamma mode {mode!r}")
-    hit = (~disagree) if mode == "collision" else disagree   # collision counts AGREEMENT
+    hit = (~disagree) if mode in ("collision", "collision_frozen") else disagree
+    # the collision modes count AGREEMENT; the others count disagreement
     return (hit & cond).sum(axis=1).astype(float), cond.sum(axis=1).astype(float)
 
 
@@ -380,6 +381,11 @@ class LabeledStatistics:
                 "gamma_mode='collision' has no beta-free P(C=0|Z=0): the E-step must "
                 "build d_j(beta) = 1 - (1 - beta) gamma^coll from the LIVE beta each "
                 "sweep. validated_em() handles this; do not call conditional_gamma().")
+        if self.gamma_mode == "collision_frozen":
+            # d_j(beta_hat) = 1 - (1 - beta_hat) gamma^coll.  Algebraically identical to
+            # the both_wrong conversion, since gamma^coll = 1 - gamma^both; verified equal
+            # to machine precision on all six cases (docs/collision_gamma.md, Part D).
+            return _clip(1.0 - (1.0 - self._pseudo_acc) * _clip(self._gamma))
         if self.gamma_mode == "both_wrong":
             return gamma_to_conditional(self._gamma, self._pseudo_acc)
         return self._gamma          # model_wrong and pairwise are already P(C=0|Z=0)
@@ -421,13 +427,13 @@ class LabeledStatistics:
 
         disagree = answers != consensus[:, None]
         pseudo_wrong = (consensus != truth)[:, None]
-        if self.gamma_mode in ("both_wrong", "collision"):
+        if self.gamma_mode in ("both_wrong", "collision", "collision_frozen"):
             cond = wrong & pseudo_wrong
         elif self.gamma_mode == "model_wrong":
             cond = wrong
         else:
             cond = np.broadcast_to(pseudo_wrong, wrong.shape)
-        hit = (~disagree) if self.gamma_mode == "collision" else disagree
+        hit = (~disagree) if self.gamma_mode in ("collision", "collision_frozen") else disagree
         num = (hit & cond).sum(axis=0).astype(float)
         den = cond.sum(axis=0).astype(float)
         if self.gamma_mode == "pairwise":
@@ -471,7 +477,7 @@ class LabeledStatistics:
 
         disagree = answers != consensus[:, None]
         pseudo_wrong = (consensus != truth)[:, None]
-        if self.gamma_mode in ("both_wrong", "collision"):
+        if self.gamma_mode in ("both_wrong", "collision", "collision_frozen"):
             cond = wrong & pseudo_wrong
         elif self.gamma_mode == "model_wrong":
             cond = wrong
