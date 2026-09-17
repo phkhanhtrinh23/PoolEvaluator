@@ -130,6 +130,14 @@ def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
     ``"pseudo_wrong"`` -- the pseudo-label is wrong, the literal reading of "the
         pseudolabel is different from the true label".
 
+    ``"collision"``    -- the ORIGINAL .tex quantity: given both the model and the
+        pseudo-label are wrong, how often do they produce the SAME wrong answer.  It
+        counts AGREEMENT, not disagreement, so it is the complement of ``both_wrong``
+        on the same denominator: ``gamma^{coll} = 1 - gamma^{both}``.  It is NOT
+        ``P(C = 0 | Z = 0)`` and must never be handed to the E-step directly; the
+        E-step consumes ``d_j(beta) = 1 - (1 - beta) gamma^{coll}``, which depends on
+        the LIVE beta and therefore costs the closed-form beta M-step.
+
     Returns ``(numerator, denominator)``, both length ``M``.
     """
     tc = np.asarray(true_class)
@@ -137,7 +145,7 @@ def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
     disagree = tc != yhat[None, :]                     # C = 0
     model_wrong = tc != 0
     pseudo_wrong = np.broadcast_to(yhat != 0, tc.shape)
-    if mode == "both_wrong":
+    if mode in ("both_wrong", "collision"):
         cond = model_wrong & pseudo_wrong
     elif mode == "model_wrong":
         cond = model_wrong
@@ -145,7 +153,8 @@ def gamma_counts(true_class, pseudo_label, mode="model_wrong"):
         cond = pseudo_wrong
     else:
         raise ValueError(f"unknown gamma mode {mode!r}")
-    return (disagree & cond).sum(axis=1).astype(float), cond.sum(axis=1).astype(float)
+    hit = (~disagree) if mode == "collision" else disagree   # collision counts AGREEMENT
+    return (hit & cond).sum(axis=1).astype(float), cond.sum(axis=1).astype(float)
 
 
 def pairwise_wrong_counts(true_class):
@@ -366,6 +375,11 @@ class LabeledStatistics:
 
     def conditional_gamma(self):
         """``P(C = 0 | Z = 0)`` as the E-step consumes it, per :func:`gamma_to_conditional`."""
+        if self.gamma_mode == "collision":
+            raise ValueError(
+                "gamma_mode='collision' has no beta-free P(C=0|Z=0): the E-step must "
+                "build d_j(beta) = 1 - (1 - beta) gamma^coll from the LIVE beta each "
+                "sweep. validated_em() handles this; do not call conditional_gamma().")
         if self.gamma_mode == "both_wrong":
             return gamma_to_conditional(self._gamma, self._pseudo_acc)
         return self._gamma          # model_wrong and pairwise are already P(C=0|Z=0)
@@ -407,13 +421,14 @@ class LabeledStatistics:
 
         disagree = answers != consensus[:, None]
         pseudo_wrong = (consensus != truth)[:, None]
-        if self.gamma_mode == "both_wrong":
+        if self.gamma_mode in ("both_wrong", "collision"):
             cond = wrong & pseudo_wrong
         elif self.gamma_mode == "model_wrong":
             cond = wrong
         else:
             cond = np.broadcast_to(pseudo_wrong, wrong.shape)
-        num = (disagree & cond).sum(axis=0).astype(float)
+        hit = (~disagree) if self.gamma_mode == "collision" else disagree
+        num = (hit & cond).sum(axis=0).astype(float)
         den = cond.sum(axis=0).astype(float)
         if self.gamma_mode == "pairwise":
             # same row functional, recomputed on the validated items alone
@@ -456,7 +471,7 @@ class LabeledStatistics:
 
         disagree = answers != consensus[:, None]
         pseudo_wrong = (consensus != truth)[:, None]
-        if self.gamma_mode == "both_wrong":
+        if self.gamma_mode in ("both_wrong", "collision"):
             cond = wrong & pseudo_wrong
         elif self.gamma_mode == "model_wrong":
             cond = wrong
@@ -667,7 +682,8 @@ def correctness_em(C, gamma, prior, prior_strength, beta_init=None,
 
 
 def validated_em(obs, stats, prior, prior_strength, constraints=None,
-                 init=None, beta_strength=0.0, max_iters=200, tol=1e-8,
+                 init=None, beta_strength=0.0, beta_max=1.0 - EPS,
+                 max_iters=200, tol=1e-8,
                  verifier_guess=None, verifier_strength=0.0, use_discount=True,
                  plan=None, report_posterior=True, pseudo_mode="joint"):
     """Joint EM over the latent answers and the per-model accuracies.
@@ -706,7 +722,11 @@ def validated_em(obs, stats, prior, prior_strength, constraints=None,
     s = np.broadcast_to(np.asarray(prior_strength, dtype=float), (M,)).astype(float)
     if np.any(s < 0):
         raise ValueError("prior_strength must be non-negative")
-    gamma = _clip(stats.conditional_gamma())[:, None]
+    collision_mode = getattr(stats, "gamma_mode", None) == "collision"
+    # In collision mode gamma is P(C=1|Z=0, both wrong) and the E-step needs
+    # d_j(beta) = 1 - (1-beta) gamma^coll, rebuilt every sweep from the live beta.
+    gamma = (_clip(stats.gamma)[:, None] if collision_mode
+             else _clip(stats.conditional_gamma())[:, None])
     if plan is None:
         e_excess = stats.e_excess() if use_discount else np.zeros((M, M))
         plan = LatentPlan(obs, e_excess)
@@ -739,7 +759,12 @@ def validated_em(obs, stats, prior, prior_strength, constraints=None,
 
         # P(C | Z = 1) uses beta; P(C | Z = 0) uses the measured, frozen gamma.
         like_z1 = np.where(C == 1.0, beta, 1.0 - beta)
-        like_z0 = np.where(C == 1.0, 1.0 - gamma, gamma)
+        if collision_mode:
+            # P(C=1|Z=0) = (1-beta) gamma^coll, so P(C=0|Z=0) = d_j(beta).
+            agree_z0 = _clip((1.0 - beta) * gamma)
+            like_z0 = np.where(C == 1.0, agree_z0, 1.0 - agree_z0)
+        else:
+            like_z0 = np.where(C == 1.0, 1.0 - gamma, gamma)
         numer = alpha[:, None] * like_z1
         tau = numer / np.clip(numer + (1.0 - alpha[:, None]) * like_z0, EPS, None)
         # On a validated item the true answer is known, so Z is observed, not inferred.
@@ -747,9 +772,16 @@ def validated_em(obs, stats, prior, prior_strength, constraints=None,
             tau[:, i] = (obs[:, i] == label).astype(float)
 
         alpha = _clip((tau.sum(axis=1) + s * pi) / (N + s))
-        # Closed-form beta: freezing the Z=0 branch leaves a weighted Bernoulli.
-        beta = float(_clip((float((tau * C).sum()) + beta_strength * beta_prior)
-                           / (float(tau.sum()) + beta_strength)))
+        if collision_mode:
+            # The Z=0 branch still contains beta, so Q_beta is not a Bernoulli and the
+            # ratio-of-counts maximiser is invalid. This is the bounded 1-D numerical
+            # M-step the collision formulation is stuck with.
+            beta = _collision_beta_mstep(tau, C, gamma, beta_prior,
+                                         beta_strength, beta_max)
+        else:
+            # Closed-form beta: freezing the Z=0 branch leaves a weighted Bernoulli.
+            beta = float(_clip((float((tau * C).sum()) + beta_strength * beta_prior)
+                               / (float(tau.sum()) + beta_strength)))
 
         obs_like = alpha[:, None] * like_z1 + (1.0 - alpha[:, None]) * like_z0
         trace.append(float(np.log(np.clip(obs_like, EPS, None)).sum()))
@@ -767,6 +799,37 @@ def validated_em(obs, stats, prior, prior_strength, constraints=None,
                 ranking=np.argsort(-alpha), entropy=entropy,
                 a_sigma=np.sqrt(np.clip(alpha * (1.0 - alpha), EPS, None) / (N + s)),
                 log_likelihood=np.asarray(trace), n_iters=iteration)
+
+
+def _collision_beta_mstep(tau, C, gamma_coll, beta_prior, beta_strength,
+                          beta_max=1.0 - EPS):
+    """Bounded 1-D maximisation of ``Q(beta)`` under the collision parameterisation.
+
+    With ``P(C=1|Z=0) = (1-beta) gamma^coll`` the expected complete-data log-likelihood
+
+        Q(beta) = sum tau [C log beta + (1-C) log(1-beta)]
+                + sum (1-tau) [C log((1-beta)gamma) + (1-C) log(1 - (1-beta)gamma)]
+
+    contains ``beta`` in BOTH branches.  The second one contributes
+    ``log(1 - gamma + beta gamma)``, whose derivative ``gamma / d(beta)`` is rational in
+    ``beta``; clearing denominators gives a polynomial whose degree grows with the number
+    of distinct ``gamma`` values, so there is no closed form.  A golden-section search on
+    the unit interval is used instead -- correct, but one numerical solve per sweep.
+    """
+    from scipy.optimize import minimize_scalar
+
+    def negative_q(b):
+        b = float(b)
+        z1 = C * np.log(b) + (1.0 - C) * np.log(1.0 - b)
+        agree = np.clip((1.0 - b) * gamma_coll, EPS, 1.0 - EPS)
+        z0 = C * np.log(agree) + (1.0 - C) * np.log(1.0 - agree)
+        anchor = beta_strength * (beta_prior * np.log(b)
+                                  + (1.0 - beta_prior) * np.log(1.0 - b))
+        return -float(np.sum(tau * z1 + (1.0 - tau) * z0) + anchor)
+
+    opt = minimize_scalar(negative_q, bounds=(EPS, float(beta_max)), method="bounded",
+                          options={"xatol": 1e-10})
+    return float(_clip(opt.x))
 
 
 # --------------------------------------------------------------------------- #
