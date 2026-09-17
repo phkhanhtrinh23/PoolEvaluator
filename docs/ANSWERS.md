@@ -4,6 +4,77 @@
 terminal I will write plain words only, no formulas — everything with mathematics in it goes
 here.
 
+
+# 2026-09-17 (later) — Is $e$ still used? Yes. It does a different job from $\gamma$.
+
+You asked why the correlated-error matrix $e$ is still in `Trinh_proof.tex`. It is there
+because it is still used, and it is not redundant with $\gamma$ — the two enter the pipeline
+at different places and neither can do the other's work.
+
+## The two quantities are not competitors
+
+| | $e$ | $\gamma$ |
+|---|---|---|
+| shape | matrix, $J\times J$ | vector, $J$ |
+| what it relates | classifier $j$ to **classifier $k$** | classifier $j$ to **the pseudo-label** |
+| what it measures | how often $j$ and $k$ are wrong *together on the same answer* | how often $j$ agrees with $\hat y$ when both are wrong |
+| where it enters | **building** the pseudo-label $\hat y_i$ — it discounts correlated votes | the **likelihood**, in the $Z=0$ branch |
+| when it acts | before the E-step, inside the vote | inside the E-step |
+
+Put plainly: $e$ decides **what the consensus answer is**; $\gamma$ decides **how much to
+believe a classifier that disagrees with it**. Remove $e$ and you still have a $\gamma$, but
+the $\hat y_i$ it is conditioned on is a worse pseudo-label — one where five near-clone models
+outvote five independent ones ten to nothing.
+
+## Does it earn its place? Measured, under the current `collision_frozen` setting
+
+MAE in accuracy points, lower is better. "no $e$" sets the discount matrix to zero and changes
+nothing else.
+
+| case | with $e$, b0 | no $e$, b0 | with $e$, b40 | no $e$, b40 |
+|---|---:|---:|---:|---:|
+| text2sql/spider | 9.18 | 9.19 | **2.29** | 2.30 |
+| text2sql/bird | 6.63 | 6.51 | **3.61** | 4.09 |
+| vision/mnist→usps | 10.91 | 10.91 | **1.68** | 9.71 |
+| vision/mnist→svhn | 58.03 | 58.03 | **13.03** | 46.66 |
+| graph/AC | 9.12 | 9.18 | 8.85 | **7.61** |
+| graph/DA | 19.00 | 19.04 | **10.55** | 12.62 |
+| **MEAN** | **18.81** | 18.81 | **6.67** | 13.83 |
+
+**Without a judge, $e$ is worth nothing — 18.81 either way.** With 40 expert labels it is worth
+**7.16 accuracy points**, more than halving the error, and it wins 5 of 6 cases. The effect is
+concentrated in vision, where the models are most correlated: mnist→svhn goes from 46.66 to
+13.03, and mnist→usps from 9.71 to 1.68.
+
+That pattern makes sense. At budget 0 the pseudo-label is whatever the vote says and the
+estimate is anchored by the prior; discounting correlated votes shifts $\hat y$ on few enough
+items to be invisible. Once the expert starts pinning true labels, the pseudo-labels on the
+*remaining* items are what carry the correction outward, and a consensus dominated by a clique
+of near-clones carries it to the wrong place.
+
+**So: keep $e$ in the `.tex`.** It is not part of the old formulation, it is an addition, and
+it is the addition that pays off most once the expert is in the loop.
+
+## "What we do now is just the old formulation and it still works, right?"
+
+Partly. The **likelihood** is the old formulation, restored exactly as you asked — one
+$\gamma$, the collision probability, with $P(C=1\mid Z=0)=(1-\beta)\gamma_j$. But three things
+sit on top of it that the old formulation did not have:
+
+| addition | what it changes | worth it? |
+|---|---|---|
+| $\gamma$ **measured**, not fitted | counted on a labeled split instead of being a free parameter | yes — the free-$\beta$ version scores 17.11, this scores 6.67 |
+| $\gamma$ **per classifier**, not per group | vector of $J$ instead of one value per provenance group | strictly finer; grouping is the special case |
+| the $e$ **vote discount** | correlated votes count less when forming $\hat y$ | nothing at b0, **7.16 points** at b40 |
+| the **expert outer loop** | pin a true label, refresh, warm-restart | 18.81 → 6.67 |
+
+The bare old formulation — collision $\gamma$ with a free, EM-fitted $\beta$ and no measured
+statistics — is the arm that scored **17.11** at budget 40. It works in the sense that it runs
+and beats the binary reduction, but it is 2.6× worse than what we have now. So: the *shape* of
+the old formulation is back, and it works; the *numbers* going into it are measured rather
+than fitted, and that is where the improvement comes from.
+
+---
 ---
 
 # 2026-09-17 — Open question I need you to decide
