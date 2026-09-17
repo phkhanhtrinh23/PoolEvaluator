@@ -128,7 +128,153 @@ $$
 So there are not three choices. There are **two distinct estimators, reachable three ways**:
 
 | estimator | $P(C=0\mid Z=0)$ | assumption | MAE b0 | MAE b40 |
-|---|---|---|---:|---:|
+|
+# 2026-09-17 — Reviewer report on the collision-aware formulation
+
+You asked for an honest ICLR/NeurIPS review. Here it is, written as a reviewer who has read
+the `.tex` and the measurements in this repository. I have **not** done a literature search,
+so treat §Novelty as the part most likely to be wrong.
+
+**Recommendation as it currently stands: weak reject (4/10), as a *central* contribution.**
+The idea is sound and the component is real. It is not, on this evidence, a paper-carrying
+idea. It is, however, one rewrite away from something I would argue to accept — see §What
+would flip my vote.
+
+---
+
+## What is genuinely good
+
+**1. The problem is real and the fix is correct.** The binary reduction $\gamma=1$ assumes two
+wrong classifiers never coincide. That is obviously false for models sharing a checkpoint, and
+the measurements show it costs a lot: the binary EM is worse than the collision model on
+**every one of 15 dataset/shift pairs**, often by 5–10 accuracy points. Identifying a wrong
+independence assumption and fixing it with one measured vector is a clean contribution.
+
+**2. It is cheap.** One length-$J$ vector from a labeled split. No architecture, no extra
+inference, no tuning. Reviewers like contributions with this cost profile.
+
+**3. The derivation is honest about what survives.** Showing that $\alpha$'s closed form is
+untouched while $\beta$'s is destroyed, and characterising exactly why (the term leaves the
+span $\mathcal S$), is the right level of rigour.
+
+---
+
+## The three objections I would raise, in order of severity
+
+### Objection 1 — the model as stated is weakly identified. This is the serious one.
+
+The paper's own parameterisation, $P(C=1\mid Z=0)=(1-\beta)\gamma_j$ with $\beta$ free, has a
+near-flat direction. The observable per classifier is its agreement rate
+$a_j=\alpha_j\beta+(1-\alpha_j)(1-\beta)\gamma_j$, so
+
+$$
+\frac{\partial a_j}{\partial\beta}=\alpha_j-(1-\alpha_j)\gamma_j ,
+$$
+
+a **difference of positive terms**, which can vanish or change sign. Measured on BIRD it
+averages $+0.039$ and is sign-indefinite across models. The consequence is not hypothetical:
+the profile likelihood is **monotone increasing to $\beta=1$ on 3 of 4 cases**, so the MLE sits
+on the boundary, where $(1-\beta)\gamma_j\to0$ and **the collision statistic the paper is about
+is multiplied by zero.**
+
+A reviewer will state this bluntly: *the paper introduces a parameter, and at the maximum
+likelihood estimate that parameter deletes the paper's own contribution from the model.* On
+the reported numbers the free-$\beta$ collision arm is the **worst** of everything tested
+(17.11 MAE at budget 40, against 6.67 for the same formulation with the multiplier frozen).
+
+This alone is enough for a reject if the paper does not address it.
+
+### Objection 2 — a factorisation the authors can show is false, kept anyway
+
+$(1-\beta)\gamma_j$ requires $P(\hat y\neq y\mid Z=0)=P(\hat y\neq y)$. Measured on the six
+labeled splits, the two differ by **1.6× to 135×**, always in the same direction. And the
+direction is structural, not incidental: the pseudo-label is a vote over the same classifiers,
+so conditioning on one being wrong selects hard items, whose votes are also wrong. The
+assumption is guaranteed to fail by construction.
+
+The reviewer's question is sharp: *the exact quantity is one count away — why approximate it?*
+The paper needs an answer, and "it preserves an interpretable two-factor reading" is a weak one
+when the interpretation is numerically wrong by two orders of magnitude.
+
+### Objection 3 — the titular contribution is the smallest effect in the system
+
+This is the framing problem, and it is the one I would press hardest in discussion. From the
+repository's own ablations, at budget 40:
+
+| component | MAE improvement |
+|---|---:|
+| the expert-validation outer loop | **12.14** |
+| the correlated-error matrix $e$ (vote discount) | **7.16** |
+| free $\beta$ $\to$ measured $\hat\beta$ | **10.44** |
+| **the choice of $\gamma$ parameterisation** | **1.51** |
+
+The collision $\gamma$ — the thing the formulation is named for — accounts for roughly
+**1.5 accuracy points out of a ~12-point improvement**, and is dominated by the outer loop, by
+a *different* correlated-error object ($e$), and by a single implementation decision about
+$\beta$. A paper titled around the collision model is claiming credit for the smallest term.
+
+---
+
+## Novelty — my biggest uncertainty
+
+Correlated and dependent annotators are a well-worked area: Dawid–Skene with dependence,
+Bayesian Classifier Combination and its dependent/community variants, and the
+colluding-annotator literature all model "annotators that err together". A reviewer will ask
+what $\gamma_j$ adds beyond a community or low-rank correlation structure, and *why the
+pairwise matrix $e$ is not simply the known object*.
+
+I cannot answer that from this repository. **If a reviewer finds a close prior formulation,
+objection 3 becomes fatal**, because the remaining contribution is engineering. This should be
+checked before submission, not after.
+
+---
+
+## Is it "vague"?
+
+**No — the opposite.** The derivation is more explicit than most submissions: every step
+stated, the closed forms characterised, the boundary behaviour derivable. Vagueness is not the
+problem.
+
+The problem is that the formulation is **precisely specified and empirically dominated by its
+own components.** That is a worse position to be in than vague, because a reviewer can verify
+it from your own tables.
+
+---
+
+## What would flip my vote
+
+**Lead with the identifiability result.** It is the most interesting thing here and I have not
+seen it stated for this model class:
+
+> *The standard collision-aware parameterisation is weakly identified in $\beta$. Its
+> profile likelihood is monotone to the boundary on real data; at that boundary the collision
+> statistic is annihilated and expert feedback cannot reach the model, because the sensitivity
+> of the likelihood to the collision rate is exactly $1-\beta$. Freezing the multiplier at a
+> measured value recovers 10.4 MAE points.*
+
+That is a crisp negative-plus-fix result with theory, a mechanism, and a measured remedy —
+the shape of paper that gets accepted. The collision model becomes the *setting*, not the
+claim, which also dissolves objection 3.
+
+**Then:**
+- run real crowdsourcing baselines (DS variants, BCC, community BCC, GLAD), not only internal
+  ablations and PoolEval;
+- report a real LLM judge, not only the oracle expert — every headline number here uses a
+  perfect expert;
+- more than two datasets per modality;
+- state plainly that no arm dominates: `pairwise` wins text-to-SQL (1.68/2.84), the frozen
+  collision arm wins vision and graph. A paper that reports this honestly is stronger than one
+  that hides it behind a mean.
+
+---
+
+## Bottom line
+
+The collision formulation is a **correct and useful component with a real identifiability
+defect**, not a headline contribution. As the centre of a paper: weak reject. As the setting
+for an identifiability result, with the system honestly ablated: I would argue to accept.
+
+---|---|---|---:|---:|
 | `collision` | $1-(1-\beta)\gamma^{\text{coll}}$, $\beta$ **fitted** | independence | 21.40 | 17.11 |
 | `collision_frozen` | $1-(1-\hat\beta)\gamma^{\text{coll}}$, $\hat\beta$ **measured** | independence | 18.81 | **6.67** |
 | `model_wrong` | $\gamma^{\text{model}}$ counted directly | **none** | **18.26** | 8.18 |
