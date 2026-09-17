@@ -140,6 +140,115 @@ The idea is sound and the component is real. It is not, on this evidence, a pape
 idea. It is, however, one rewrite away from something I would argue to accept — see §What
 would flip my vote.
 
+
+# 2026-09-17 — GLAD (Whitehill et al., NIPS 2009): why it got in, and how we compare
+
+I read the actual PDF, not a summary — the automatic summariser got two facts wrong (it said
+the exponent was $\alpha_i+\beta_j$ and the M-step was closed form; both are false).
+
+**Paper:** *Whose Vote Should Count More: Optimal Integration of Labels from Labelers of
+Unknown Expertise.* Whitehill, Wu, Bergsma, Movellan, Ruvolo. NIPS 22 (2009).
+
+## What it actually says
+
+$$
+p(L_{ij}=Z_j \mid \alpha_i,\beta_j)=\frac{1}{1+e^{-\alpha_i\beta_j}},
+\qquad
+\log\frac{p(L_{ij}=Z_j)}{1-p(L_{ij}=Z_j)}=\alpha_i\beta_j
+$$
+
+A **bilinear** log-odds: $\alpha_i$ is labeler expertise (negative $=$ adversarial), $1/\beta_j$
+is image difficulty. Verbatim from §3.1: *"Using gradient ascent, we find values of $\alpha$
+and $\beta$ that locally maximize $Q$"* — conjugate gradient via libgsl. **No closed form.**
+Our `.tex` section on this is correct.
+
+Labelers are **conditionally independent given the true label**. There is no correlation
+structure of any kind.
+
+## Why it was accepted
+
+1. **Timing.** 2009 was year zero for crowdsourcing in ML — Mechanical Turk had just become a
+   research instrument. Dawid–Skene (1979) existed but sat in biostatistics. A principled
+   model for MTurk labels was genuinely new *to that audience*.
+2. **One memorable idea, in one equation.** Item difficulty as a second axis, and negative
+   $\alpha$ for adversaries falling out for free. You can recite the model from memory.
+3. **It demonstrated scale.** 1 million images, EM converging in ~10 minutes on one 2.8 GHz
+   core.
+4. **Clean validation.** Simulations recovering the true $\alpha,\beta$ as labelers increase,
+   plus real MTurk data, against the one baseline everybody used (majority vote).
+5. **The bar.** NIPS 2009 had roughly 1,100 submissions. A clean idea with a working
+   demonstration was sufficient. The same paper submitted today would very likely be rejected
+   for thin baselines and a single application.
+
+## The parallel you should care about most
+
+**GLAD has the same class of identifiability problem we found, and it got in anyway.**
+
+$\alpha_i\beta_j$ is a product of two free parameters: rescaling $\alpha\to c\alpha$,
+$\beta\to\beta/c$ leaves every prediction unchanged. That is a flat direction, exactly like
+ours in $(1-\beta)\gamma_j$.
+
+What they did about it — §3.1, verbatim: they impose *"Gaussian priors $(\mu=1,\sigma=1)$ for
+$\alpha$"* and reparameterise *"$\beta=e^{\beta'}$ and imposed a Gaussian prior
+$(\mu=1,\sigma=1)$ on $\beta'$"*. They **name the degeneracy and regularise it in the open**.
+
+That is the template. Our fix — freezing the multiplier at a measured $\hat\beta$ — is the
+same move and is arguably better justified, because we have labeled data to measure from
+rather than a prior pulled from the air. **Reviewers do not reject a model for having a flat
+direction. They reject it for not noticing.**
+
+## Is it better than us?
+
+Split the question.
+
+**As a paper, for its venue and year: yes, clearly.** One claim, one equation, one baseline,
+one convincing application. Our work has five entangled components and no single sentence you
+would remember.
+
+**As a model, in 2026: no.** Point by point:
+
+| | GLAD (2009) | ours |
+|---|---|---|
+| annotator correlation | **none** — conditional independence assumed | the whole point ($\gamma$, and $e$ pairwise) |
+| item difficulty | **yes**, $\beta_j$ | no — we have no per-item parameter |
+| M-step | gradient ascent, no closed form | closed form for $\alpha$; for $\beta$ too when the multiplier is frozen |
+| nuisance parameters | all fitted | measured on a labeled split |
+| known labels | "clamped" via the prior | clamped, **and actively chosen** |
+| choosing what to label | **future work** | implemented and measured ($A_\mu$) |
+
+Two of those deserve emphasis:
+
+**We relax precisely what GLAD assumes away.** GLAD's conditional independence is the
+assumption the collision $\gamma$ exists to remove. That is a legitimate lineage to claim.
+
+**GLAD names our outer loop as future work.** From §3.2, verbatim: *"This would allow using
+the algorithm in an active manner to choose in real-time which images should be labeled next
+so as to minimize the uncertainty about the image labels."* You implemented that, with an
+acquisition function and measurements. A 2009 NIPS paper's closing wish is your section 9.
+
+## The concrete gap this exposes
+
+**GLAD is discussed in your `.tex` but has never been run.** `baselines/` contains
+`dawid_skene`, `majority`, `independent`, `agreement_line`, `llm_judge` — **no GLAD**. A
+reviewer who sees a whole section arguing against GLAD's M-step, with no GLAD row in any
+table, will ask why. It is a couple of hundred lines: E-step is the same Bayes rule, M-step is
+`scipy.optimize.minimize` on $(\alpha,\beta)$ with the two Gaussian priors.
+
+I would implement it and put it in the main table. If we beat it, that is the baseline
+comparison the review report said was missing. If we do not beat it on some modality, better
+to know now.
+
+## What to take from this
+
+GLAD succeeded on **clarity and scope discipline**, not technical depth — it is a simpler
+model than ours and has a known degeneracy it handles with priors. The lesson is not "make the
+model more sophisticated". It is:
+
+- one claim a reviewer can repeat;
+- name your degeneracy and fix it in the open, as they did;
+- compare against the obvious baselines, including this one;
+- show it works at a scale someone would actually use.
+
 ---
 
 ## What is genuinely good
@@ -274,7 +383,7 @@ The collision formulation is a **correct and useful component with a real identi
 defect**, not a headline contribution. As the centre of a paper: weak reject. As the setting
 for an identifiability result, with the system honestly ablated: I would argue to accept.
 
----|---|---|---:|---:|
+|---|---|---|---|---|
 | `collision` | $1-(1-\beta)\gamma^{\text{coll}}$, $\beta$ **fitted** | independence | 21.40 | 17.11 |
 | `collision_frozen` | $1-(1-\hat\beta)\gamma^{\text{coll}}$, $\hat\beta$ **measured** | independence | 18.81 | **6.67** |
 | `model_wrong` | $\gamma^{\text{model}}$ counted directly | **none** | **18.26** | 8.18 |
