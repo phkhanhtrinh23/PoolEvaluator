@@ -89,7 +89,106 @@ in every formulation, in every experiment. There is no $\beta_j$ anywhere and th
 What you are probably remembering is one of the three quantities that *are* indexed by model:
 
 | quantity | shape | what it is |
-|---|---|---|
+|
+# 2026-09-17 — Yes: that is `model_wrong`. And it collapses my "three options" into two.
+
+You remember correctly. The arm with **no $(1-\beta)$ factor at all** is `model_wrong`:
+
+$$
+\gamma_j^{\text{model}} \;=\; P\big(r_i^j\neq\hat y_i \;\big|\; r_i^j\neq y_i\big)
+$$
+
+counted over the **wider** denominator — every item where classifier $j$ is wrong, saying
+nothing about the pseudo-label. It is used as $P(C=0\mid Z=0)$ **directly**. No factorisation,
+no $\beta$, no $\hat\beta$, no independence assumption.
+
+## This forces a correction to my earlier entry
+
+I presented three options for handling the independence step. Checking them numerically,
+**two of the three are the same estimator, and it is one that already exists.**
+
+**Option 2 was $\delta_j=P(C=1\mid Z=0)$ counted as one ratio.** But
+
+$$
+\delta_j \;=\; 1-\gamma_j^{\text{model}} ,
+$$
+
+exact complements on the same denominator. Verified: on spider the two vectors sum to
+$1.000000000000$ in every coordinate. **Option 2 is `model_wrong`, written in the agreement
+direction instead of the disagreement direction.**
+
+**Option 3 was $P(W{=}0\mid Z{=}0)\times\gamma^{\text{coll}}_j$, both factors measured.** But
+that product is exactly what the proof said $P(C=1\mid Z=0)$ equals, so it is $\delta_j$ too.
+Verified on all six cases: max deviation $1.1\times10^{-16}$.
+
+$$
+\boxed{\text{Option 2}\;=\;\text{Option 3}\;=\;\texttt{model\_wrong}}
+$$
+
+So there are not three choices. There are **two distinct estimators, reachable three ways**:
+
+| estimator | $P(C=0\mid Z=0)$ | assumption | MAE b0 | MAE b40 |
+|---|---|---|---:|---:|
+| `collision` | $1-(1-\beta)\gamma^{\text{coll}}$, $\beta$ **fitted** | independence | 21.40 | 17.11 |
+| `collision_frozen` | $1-(1-\hat\beta)\gamma^{\text{coll}}$, $\hat\beta$ **measured** | independence | 18.81 | **6.67** |
+| `model_wrong` | $\gamma^{\text{model}}$ counted directly | **none** | **18.26** | 8.18 |
+
+## The uncomfortable result
+
+**The exact, assumption-free form loses at budget 40.** `model_wrong` needs no independence
+assumption and is therefore the theoretically correct one — and it scores 8.18 against
+`collision_frozen`'s 6.67.
+
+But look at budget 0, where the ordering **reverses**: `model_wrong` is best at 18.26,
+`collision_frozen` worst of the two at 18.81.
+
+$$
+\boxed{
+\begin{array}{lll}
+\text{no judge} & \text{the exact form wins} & 18.26 \text{ vs } 18.81\\
+\text{with judge} & \text{the factorised form wins} & 6.67 \text{ vs } 8.18
+\end{array}}
+$$
+
+## Why, most likely
+
+It is not transfer. I measured how far each statistic moves from the labeled split to the
+target, and $\gamma^{\text{model}}$ transfers as well or better on 4 of 6 cases:
+
+| case | $\gamma^{\text{coll}}$ shift | $\gamma^{\text{model}}$ shift |
+|---|---:|---:|
+| spider | 0.0745 | 0.0767 |
+| bird | 0.0729 | **0.0625** |
+| mnist→usps | 0.2859 | **0.2746** |
+| mnist→svhn | 0.4371 | **0.2364** |
+| graph/AC | **0.0707** | 0.0942 |
+| graph/DA | **0.0842** | 0.1106 |
+
+The likelier explanation is **how many things the expert can repair**. In `model_wrong` the
+$Z=0$ branch is a single number $\gamma_j^{\text{model}}$, so expert validation has **one**
+channel to correct it through. In `collision_frozen` the branch is a product of **two**
+separately-refreshed quantities, $\hat\beta$ and $\gamma^{\text{coll}}_j$, so the expert has
+two channels. With no expert that extra structure is pure added approximation error, which is
+why the exact form wins at budget 0. With 40 expert labels the extra repair surface more than
+pays for the approximation, which is why it wins at budget 40.
+
+That is a hypothesis consistent with the budget-0/budget-40 reversal, not something I have
+isolated. It would be testable by refreshing only one of the two factors.
+
+## What this means for the `.tex`
+
+The earlier "pick 1, 2 or 3" question was badly posed and I withdraw it. The real choice is:
+
+- **the document as it stands** describes `collision`, the free-$\beta$ version — the arm that
+  scores 17.11, worst of the three;
+- **one sentence** turns it into `collision_frozen` — the best arm at 6.67 — by saying the
+  $Z=0$ branch uses the measured $\hat\beta$ rather than the fitted $\beta$;
+- **a different sentence** turns it into `model_wrong` — exact, no assumption, best without a
+  judge at 18.26 but worse with one at 8.18.
+
+All three keep your $\gamma$ as a per-model vector. Tell me which and it is a small edit.
+
+---|---|---|
 | $\gamma_j$ | vector, $J$ | the collision rate, one per classifier |
 | $d_j(\beta)=1-(1-\beta)\gamma_j$ | vector, $J$ | the $Z=0$ branch — **per model, but through $\gamma_j$, not through $\beta$** |
 | `pairwise` $\gamma$ | vector, $J$ | a per-model $\gamma$ derived from the $e$ matrix instead of counted directly |
