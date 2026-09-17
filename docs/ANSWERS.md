@@ -208,7 +208,154 @@ would remember.
 **As a model, in 2026: no.** Point by point:
 
 | | GLAD (2009) | ours |
-|---|---|---|
+|
+# 2026-09-17 — How the collision term removes GLAD's independence assumption
+
+Two mechanisms, and they are different from each other. Then a measurement of how much is
+actually removed, which is **not** "all of it".
+
+## 1. What GLAD assumes
+
+Given the true label $Z_j$, the labels of different annotators are independent:
+
+$$
+P\big(L_{1j},L_{2j},\dots,L_{mj}\mid Z_j\big)\;=\;\prod_{i=1}^{m}P\big(L_{ij}\mid Z_j\big)
+$$
+
+This is what makes the E-step a product of per-annotator likelihood ratios, and it is shared by
+Dawid–Skene, GLAD and every model in that family. In words: **once you know the truth, one
+annotator's mistake tells you nothing about another's.**
+
+## 2. Why it fails for a pool of models
+
+For human annotators it is a reasonable idealisation. For a pool of LLMs or classifiers it is
+plainly false: two models fine-tuned from the same checkpoint do not merely each have an error
+rate — when they fail they fail **on the same items** and produce **the same wrong answer**.
+So
+
+$$
+P\big(r^1=a,\;r^2=a \mid y\neq a\big)\;\gg\;P\big(r^1=a\mid y\big)\,P\big(r^2=a\mid y\big).
+$$
+
+Under independence a chorus of ten near-clones looks like ten independent confirmations. It is
+one confirmation repeated ten times, and the estimator becomes confidently wrong.
+
+## 3. Mechanism one — the shared pseudo-label as a latent common cause
+
+This is the part that does the work, and it is easy to miss because it looks like a change of
+observable rather than a change of dependence structure.
+
+GLAD conditions on the **true label** $y$, which is per item but enters each annotator's
+likelihood separately. We instead condition on the pair $(Z_i^j,\ \hat y_i)$, where $\hat y_i$
+is the **pseudo-label — one object shared by every model on that item**:
+
+$$
+P\big(C_i^1,\dots,C_i^J \mid Z_i^1,\dots,Z_i^J,\ \hat y_i\big)
+=\prod_{j}P\big(C_i^j\mid Z_i^j,\ \hat y_i\big)
+$$
+
+Still a product — but **conditional on $\hat y_i$**. Now marginalise $\hat y_i$ out, which is
+what the model actually claims about the observable answers:
+
+$$
+P\big(r^1,\dots,r^J\mid y\big)
+=\mathbb{E}_{\hat y}\Big[\textstyle\prod_j P\big(r^j\mid Z^j,\hat y\big)\Big]
+\;\neq\;\prod_j P\big(r^j\mid y\big).
+$$
+
+**An expectation of a product over a shared variable does not factorise.** That inequality is
+the removal of conditional independence. Concretely, two wrong models are both pulled toward
+the same $\hat y$, with strengths $\gamma_1$ and $\gamma_2$, so
+
+$$
+P\big(r^1=r^2=a,\ \text{both wrong}\big)\;\ge\;P(\hat y=a,\ \hat y\ \text{wrong})\,\gamma_1\gamma_2,
+$$
+
+which is far larger than the product of marginals whenever the $\gamma$'s are large.
+
+$$
+\boxed{\ \hat y \text{ is a latent common cause; } \gamma_j \text{ is model } j\text{'s loading on it.}\ }
+$$
+
+Structurally this is a **one-factor model**: a single shared factor per item, one loading per
+model, inducing a rank-one correlation among the errors. That is the same device community-BCC
+and factor-analytic annotator models use, which is worth knowing because it is also where a
+reviewer will look for prior work.
+
+## 4. Mechanism two — the $e$ matrix, for what one factor cannot express
+
+A single shared factor only produces correlation *through the consensus*. Two models that
+collide with each other but not with $\hat y$ are invisible to $\gamma$. That is what $e$ is
+for:
+
+$$
+e_{jk}=P\big(r^j=r^k\ \wedge\ \text{both wrong}\big)
+$$
+
+the **full pairwise matrix**, measured directly, no factor assumption. Its excess over the
+cross-group chance level discounts votes when $\hat y$ is formed. So:
+
+$$
+\boxed{
+\begin{array}{ll}
+\gamma \ (\text{vector},\ J) & \text{rank-one correlation, through the shared pseudo-label, inside the likelihood}\\
+e \ (\text{matrix},\ J\times J) & \text{full pairwise correlation, inside the vote that builds }\hat y
+\end{array}}
+$$
+
+They are complementary, which is also why the ablation showed $e$ is worth 7.16 MAE points at
+budget 40 even with $\gamma$ already present.
+
+## 5. What is *not* removed — be honest about this
+
+We did not eliminate the assumption; **we moved it up one level.** The model still asserts
+
+$$
+C_i^j \ \perp\ C_i^k \ \Big|\ Z_i^j,\ Z_i^k,\ \hat y_i ,
+$$
+
+i.e. conditional on the truth **and the pseudo-label**, models still err independently. That is
+strictly weaker than GLAD's assumption, and strictly stronger than no assumption.
+
+## 6. How much is actually removed — measured
+
+For every off-diagonal pair, mean absolute gap between observed and predicted:
+
+- **(1) GLAD's assumption:** $P(j\text{ wrong},k\text{ wrong})$ vs $P(j\text{ wrong})P(k\text{ wrong})$
+- **(2) our residual:** $P(\text{both agree with }\hat y\mid\text{both wrong})$ vs $\gamma_j\gamma_k$
+
+| case | (1) GLAD gap | (2) our residual | removed | median pair sample |
+|---|---:|---:|---:|---:|
+| text2sql/spider | 0.1198 | 0.0454 | **62%** | 19 |
+| text2sql/bird | 0.1535 | 0.0703 | **54%** | 57 |
+| graph/AC | 0.0668 | 0.0296 | **56%** | 205 |
+| graph/DA | 0.0734 | 0.0247 | **66%** | 129 |
+| vision/mnist→usps | 0.0028 | 0.0725 | — | **4** |
+| vision/mnist→svhn | 0.0027 | 0.0125 | — | **4** |
+
+**On the four cases where there is dependence to remove, we remove 54–66% of it.** Not all,
+consistent with §5 — the residual is the correlation a single shared factor cannot express.
+
+**The two vision rows are not evidence of anything and I am not going to read them as such.**
+The labeled split there is MNIST, where the models are 99.2% accurate, so joint errors are rare
+(GLAD's gap is already 0.003 — there is nothing to remove) and the conditioning set has a
+**median of 4 items per pair**. Those residual numbers are sampling noise.
+
+## 7. What this is worth saying in the paper
+
+The defensible claim is narrow and true:
+
+> *GLAD and Dawid–Skene assume annotators err independently given the true label. For pools of
+> models with shared provenance this fails: we measure joint-error dependence of 0.07–0.15
+> above the independent prediction. Routing every model's agreement through a shared latent
+> pseudo-label with a per-model loading removes 54–66% of it, and an explicit pairwise
+> correlation matrix in the consensus handles part of the remainder.*
+
+That is a claim with a number attached, a stated mechanism, and an honest residual. It is much
+stronger than "we relax conditional independence", which every reviewer has read a hundred
+times.
+
+---|---|---|
 | annotator correlation | **none** — conditional independence assumed | the whole point ($\gamma$, and $e$ pairwise) |
 | item difficulty | **yes**, $\beta_j$ | no — we have no per-item parameter |
 | M-step | gradient ascent, no closed form | closed form for $\alpha$; for $\beta$ too when the multiplier is frozen |
