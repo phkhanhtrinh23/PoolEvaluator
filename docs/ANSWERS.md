@@ -60,6 +60,87 @@ If you want the document to describe the better-scoring configuration, that is O
 from the entry below, and it is a small edit — one paragraph in 7.5 and one in 7.6. Your
 call; nothing is blocked either way.
 
+
+# 2026-09-17 — Real LLM latency: what the y-axis should actually say
+
+You are right that milliseconds is the wrong unit. The old axis timed the *arithmetic* over
+cached model outputs; it never included the cost of **producing** those outputs, which is the
+whole cost in a real deployment. I measured both missing pieces rather than estimating them.
+
+New figure: `figures/subset_count_live.png` / `.pdf`. The old one is still there for the
+cached-compute view.
+
+## The two measurements
+
+**Generation — 10 real calls to `gpt-5.6-luna` on spider prompts** (schema plus question,
+asking for one SQLite query):
+
+| | seconds |
+|---|---:|
+| mean | **5.36** |
+| median | 4.07 |
+| min | 2.88 |
+| max | 10.79 |
+
+Mean 787 prompt tokens in, 196 completion tokens out. The spread is driven almost entirely by
+output length: the two slowest calls (10.79 s, 10.72 s) emitted 546 and 559 tokens, the
+fastest (2.88 s) emitted 139.
+
+**Execution — 199 real spider queries against the 372 shipped SQLite databases:**
+
+| | milliseconds |
+|---|---:|
+| mean | 1.45 |
+| median | **0.06** |
+| p90 | 0.18 |
+| p99 | 3.19 |
+| max | 252.50 |
+
+So execution is **four orders of magnitude cheaper than generation** and can be ignored in the
+total. The mean is 24× the median because of one 252 ms outlier; even that is 2% of a single
+generation call.
+
+## The answer: minutes, not milliseconds
+
+Per item per model the cost is $5.36 + 0.00145 \approx 5.36$ seconds, essentially all
+generation. For $K$ subsets of 10 items:
+
+| $K$ | items | **min / model** | hours, 10 models, serial | hours, 10 models, 8-way parallel | MAE b0 | MAE b40 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 10 | **0.9** | 0.15 | 0.02 | 21.76 | 9.20 |
+| 2 | 20 | 1.8 | 0.30 | 0.04 | 19.19 | 8.36 |
+| 3 | 30 | **2.7** | 0.45 | 0.06 | **17.92** | **8.30** |
+| 4 | 40 | 3.6 | 0.60 | 0.07 | 18.34 | 8.52 |
+| 6 | 60 | 5.4 | 0.89 | 0.11 | 17.70 | 8.24 |
+| 8 | 80 | 7.1 | 1.19 | 0.15 | 17.32 | 8.41 |
+| 12 | 120 | **10.7** | **1.79** | 0.22 | 16.91 | 9.41 |
+
+**So: about 1 minute per model at $K=1$, about 11 minutes per model at $K=12$.** For the whole
+10-model spider pool run serially that is **9 minutes to 1 hour 47 minutes**; with 8
+concurrent requests, **1 minute to 13 minutes**.
+
+## What changes about the recommendation
+
+Nothing changes about the shape — cost is still exactly linear in $K$ and accuracy still
+flattens after $K=3$ — but the *stakes* change by five orders of magnitude. The old figure said
+the difference between $K=3$ and $K=12$ was 0.022 ms per model. The real figure says it is
+**8 minutes per model, or 80 minutes of wall-clock for a 10-model pool**, in exchange for 1.0
+accuracy point at budget 0 and a *worse* number at budget 40.
+
+$K=3$ was the knee before and it is a much more consequential knee now.
+
+## What is still not counted
+
+Two costs I did not include, both of which push the same way:
+
+1. **Rate limits and retries.** The 5.36 s is a clean serial call. Real batch runs hit
+   throttling, and the effective per-item time rises.
+2. **Money.** At 787 in / 196 out tokens per call, $K=12$ on a 10-model pool is 1,200
+   generations. Latency is the axis you asked for, but cost scales with exactly the same
+   linear factor, so the same knee applies.
+
+Both make the flat part of the MAE curve more expensive to buy, not less.
+
 ---
 ---|---|---|
 | shape | matrix, $J\times J$ | vector, $J$ |
