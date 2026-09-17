@@ -14,7 +14,54 @@ at different places and neither can do the other's work.
 ## The two quantities are not competitors
 
 | | $e$ | $\gamma$ |
-|---|---|---|
+|
+# 2026-09-17 (latest) — 7.6.1 removed; what that settles
+
+Done. `Trinh_proof.tex` is **47 pages, compiles clean, 0 undefined references**, committed
+as `9b00140`. Backup of the previous version is in the scratchpad.
+
+Removed: subsection 7.6.1, "A degenerate point of the objective, and how to avoid it" — the
+$\beta\to1$ discussion and the two remedies. 2,545 characters. Nothing referenced it, so
+there are no dangling cross-references.
+
+Kept, per your answer: 7.7 "Refreshing the measured quantities", with all three of its parts
+— what is counted for $\gamma$, when the refresh happens, and the blending rule.
+
+## What section 7.6 says now
+
+Just the mathematics, no commentary:
+
+$$
+Q_\beta
+=
+\Big(\textstyle\sum_{i,j}\tau_i^jC_i^j\Big)\log\beta
++\Big(\textstyle\sum_{i,j}\tau_i^j(1-C_i^j)\Big)\log(1-\beta)
++\Big(\textstyle\sum_{i,j}(1-\tau_i^j)C_i^j\Big)\log(1-\beta)
++\sum_j D_j\log d_j(\beta)
+$$
+
+with $D_j=\sum_i(1-\tau_i^j)(1-C_i^j)$. The final sum is not in the span $\mathcal S$, so
+there is no ratio-of-counts maximiser and $\beta$ comes from the bounded one-dimensional
+maximisation of Section 3.6. The $\alpha$ M-step and the E-step are unaffected.
+
+## One consequence you should know about
+
+Removing 7.6.1 also removed the only place the document discussed replacing the fitted
+$\beta$ with a measured $\hat\beta$ in the $Z=0$ branch. **So the `.tex` now commits to
+Option 1** — $(1-\beta)\gamma_j$ with a free, EM-fitted $\beta$, and the independence
+assumption left implicit.
+
+That is a coherent document and it matches the old formulation you asked to restore. I am
+flagging it only so the choice is deliberate rather than a side effect of a deletion: the
+configuration the `.tex` now describes is the one that measured **17.11** at budget 40, not
+the **6.67** one. The gap is entirely the free-versus-measured $\beta$.
+
+If you want the document to describe the better-scoring configuration, that is Option 2 or 3
+from the entry below, and it is a small edit — one paragraph in 7.5 and one in 7.6. Your
+call; nothing is blocked either way.
+
+---
+---|---|---|
 | shape | matrix, $J\times J$ | vector, $J$ |
 | what it relates | classifier $j$ to **classifier $k$** | classifier $j$ to **the pseudo-label** |
 | what it measures | how often $j$ and $k$ are wrong *together on the same answer* | how often $j$ agrees with $\hat y$ when both are wrong |
