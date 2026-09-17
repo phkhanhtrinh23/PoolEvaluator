@@ -76,7 +76,100 @@ cached-compute view.
 asking for one SQLite query):
 
 | | seconds |
+|
+# 2026-09-17 — Was there ever a per-model $\beta_j$? No. And the best result IS yours.
+
+Two questions, and the answer to the second one is the opposite of what you remember.
+
+## 1. There was never a per-model $\beta$
+
+I checked the code. **$\beta$ has always been a scalar** — one number for the whole dataset,
+in every formulation, in every experiment. There is no $\beta_j$ anywhere and there never was.
+
+What you are probably remembering is one of the three quantities that *are* indexed by model:
+
+| quantity | shape | what it is |
+|---|---|---|
+| $\gamma_j$ | vector, $J$ | the collision rate, one per classifier |
+| $d_j(\beta)=1-(1-\beta)\gamma_j$ | vector, $J$ | the $Z=0$ branch — **per model, but through $\gamma_j$, not through $\beta$** |
+| `pairwise` $\gamma$ | vector, $J$ | a per-model $\gamma$ derived from the $e$ matrix instead of counted directly |
+
+$d_j$ is the likely culprit: it is written with a subscript $j$ and it contains $\beta$, so it
+*looks* like a per-model $\beta$. It is not — it is a scalar $\beta$ combined with a per-model
+$\gamma_j$.
+
+## 2. The best result so far, every arm on the same six cases
+
+MAE in accuracy points, budget 40, lower is better. Cross-checked: `model_wrong` on spider
+reads 2.6595 in two independently-run files, `both_wrong` reads 2.2895 in two more, so these
+are directly comparable.
+
+| arm | spider | bird | usps | svhn | AC | DA | **MEAN** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **collision_frozen** | 2.29 | 3.61 | **1.68** | **13.03** | 8.85 | **10.55** | **6.67** |
+| **both_wrong** (identical) | 2.29 | 3.61 | **1.68** | **13.03** | 8.85 | **10.55** | **6.67** |
+| model_wrong | 2.66 | 3.61 | 6.15 | 13.09 | **8.22** | 15.37 | 8.18 |
+| pairwise_calibrated | **1.68** | **2.84** | 9.78 | 43.66 | **7.87** | 12.36 | 13.03 |
+| no $e$ discount | 2.30 | 4.09 | 9.71 | 46.66 | **7.61** | 12.62 | 13.83 |
+| pairwise | 1.70 | 4.35 | 16.31 | 48.30 | 8.20 | 11.71 | 15.10 |
+| collision (free $\beta$) | 7.10 | 13.43 | 2.28 | 49.39 | 10.53 | 19.95 | 17.11 |
+
+And at budget 0:
+
+| arm | **MEAN b0** |
 |---|---:|
+| pairwise / pairwise_calibrated | **17.04** |
+| model_wrong | 18.26 |
+| collision_frozen = both_wrong | 18.81 |
+| collision (free $\beta$) | 21.40 |
+
+## 3. The best result is your collision formulation
+
+This is the part where your memory is inverted. **`collision_frozen` *is* the collision
+formulation.** It stores exactly the $\gamma$ you asked for — a vector of $J$, entry $j$ being
+"classifier $j$ agrees with the pseudo-label and both are wrong" — and it uses your
+factorisation. The only change is that the multiplier is the measured $\hat\beta$ rather than a
+free, EM-fitted $\beta$.
+
+And it is numerically identical to `both_wrong`, not approximately but exactly, because
+
+$$
+(1-\hat\beta)\,\gamma^{\text{coll}}_j
+\;=\;
+1-\big[\hat\beta+(1-\hat\beta)\gamma^{\text{both}}_j\big]
+\qquad\text{since } \gamma^{\text{coll}}_j=1-\gamma^{\text{both}}_j .
+$$
+
+Verified to machine precision through the full expert loop on all six cases — the two rows
+above are the same numbers because they are the same estimator written two ways.
+
+So the honest summary is:
+
+$$
+\boxed{
+\begin{array}{ll}
+\text{your formulation, free }\beta & 17.11 \quad\text{(worst arm tested)}\\
+\text{your formulation, measured }\hat\beta & \mathbf{6.67} \quad\text{(best arm tested)}
+\end{array}}
+$$
+
+The entire 10.4-point gap is one design decision: whether the multiplier in front of your
+$\gamma$ is estimated or measured. Nothing else about the formulation changes.
+
+## 4. Where the other arms still win
+
+`pairwise` and `pairwise_calibrated` are **the best arms on text-to-SQL** — 1.68 and 2.84 on
+spider and bird, beating `collision_frozen`'s 2.29 and 3.61 — and they are the best at budget 0
+overall (17.04). They collapse on vision (43.66 and 48.30 on svhn against 13.03), which is what
+sinks their mean. If text-to-SQL were the only modality, `pairwise_calibrated` would be the
+recommendation.
+
+`no e discount` wins graph/AC at 7.61, the one case where the vote discount hurts.
+
+So there is no arm that dominates everywhere. But averaged over all three modalities, the best
+thing tested is your collision $\gamma$ with a measured multiplier.
+
+---|---:|
 | mean | **5.36** |
 | median | 4.07 |
 | min | 2.88 |
