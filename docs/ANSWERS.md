@@ -325,7 +325,186 @@ For every off-diagonal pair, mean absolute gap between observed and predicted:
 - **(2) our residual:** $P(\text{both agree with }\hat y\mid\text{both wrong})$ vs $\gamma_j\gamma_k$
 
 | case | (1) GLAD gap | (2) our residual | removed | median pair sample |
-|---|---:|---:|---:|---:|
+|
+# 2026-09-17 — Where $(1-\beta)\gamma$ comes from, step by step, and the honest verdict
+
+**Short answer: the formula cannot be derived. It can only be *assumed*, and the assumption is
+measurably false. So yes — as a derivation it is wrong. As a declared modelling assumption it
+is legitimate, provided you declare it.**
+
+Below is every step, then the same thing in raw counts so nothing is abstract.
+
+## Step 0 — name the three events
+
+Fix one item $i$ and one classifier $j$. Drop the subscripts. Three events:
+
+$$
+\begin{aligned}
+A &= \{\,r^j \neq y\,\} && \text{classifier } j \text{ is WRONG} && (Z=0)\\
+B &= \{\,\hat y = y\,\} && \text{pseudo-label is RIGHT} && (W=1)\\
+G &= \{\,r^j = \hat y\,\} && \text{classifier } j \text{ AGREES with the pseudo-label} && (C=1)
+\end{aligned}
+$$
+
+Definitions of the two parameters:
+
+$$
+\beta \;=\; P(B) \qquad\text{(a MARGINAL probability — remember this)}
+$$
+$$
+\gamma_j \;=\; P\big(G \mid A \cap B^c\big) \qquad\text{(given BOTH are wrong, they coincide)}
+$$
+
+**What we want:** $P(G\mid A)$.
+
+## Step 1 — split on $B$ (exact)
+
+$B$ happens or it does not, so for any events whatsoever:
+
+$$
+P(G\mid A)\;=\;P(G\cap B\mid A)\;+\;P(G\cap B^c\mid A)
+$$
+
+Apply the chain rule to each piece:
+
+$$
+P(G\mid A)\;=\;\underbrace{P(B\mid A)\,P(G\mid A\cap B)}_{\text{term 1}}
+\;+\;\underbrace{P(B^c\mid A)\,P(G\mid A\cap B^c)}_{\text{term 2}}
+$$
+
+No assumptions. This is just $P(X)=P(X\cap Y)+P(X\cap Y^c)$ and $P(X\cap Y)=P(Y)P(X\mid Y)$.
+
+## Step 2 — term 1 is exactly zero (exact)
+
+Look at $P(G\mid A\cap B)$. We are told:
+
+- from $A$: $\ r^j \neq y$
+- from $B$: $\ \hat y = y$
+
+Substitute the second into the first: $r^j \neq y = \hat y$, therefore $r^j \neq \hat y$,
+therefore $G$ is **impossible**.
+
+$$
+\boxed{P(G\mid A\cap B)=0}
+$$
+
+A wrong answer cannot equal a right answer. Term 1 disappears entirely.
+
+## Step 3 — term 2 is $\gamma_j$ by definition (exact)
+
+$P(G\mid A\cap B^c)$ is *literally* the definition of $\gamma_j$ from Step 0. So:
+
+$$
+\boxed{\;P(G\mid A)\;=\;P(B^c\mid A)\cdot\gamma_j\;}
+$$
+
+**This is exact. Nothing has been assumed. This is the correct formula.**
+
+## Step 4 — the step where it breaks
+
+Compare what we derived with what is claimed:
+
+$$
+\text{derived: } P(B^c\mid A)\cdot\gamma_j
+\qquad\text{vs}\qquad
+\text{claimed: } (1-\beta)\cdot\gamma_j
+$$
+
+They agree **if and only if**
+
+$$
+\underbrace{P(B^c\mid A)}_{\text{CONDITIONAL on } j \text{ being wrong}}
+\;=\;
+\underbrace{1-\beta \;=\; P(B^c)}_{\text{MARGINAL}}
+$$
+
+and $P(X\mid Y)=P(X)$ **is the definition of independence**. So:
+
+$$
+\boxed{(1-\beta)\gamma_j \text{ is valid} \iff \hat y\text{'s correctness is independent of whether classifier } j \text{ is correct.}}
+$$
+
+There is no derivation of this. It is an assumption, and it is the *only* assumption in the
+whole argument.
+
+## Step 5 — the same thing in raw counts, spider, classifier 0
+
+$N=120$ labeled items.
+
+| count | value |
+|---|---:|
+| $\lvert A\rvert$ — classifier 0 wrong | 23 |
+| $\lvert B^c\rvert$ — pseudo-label wrong | 22 |
+| $\lvert A\cap B^c\rvert$ — both wrong | 19 |
+| $\lvert A\cap B^c\cap G\rvert$ — both wrong **and same wrong answer** | 19 |
+| $\lvert A\cap G\rvert$ — classifier wrong and agrees with $\hat y$ | 19 |
+
+Now the two factors:
+
+$$
+1-\beta=\frac{22}{120}=0.1833
+\qquad\text{but}\qquad
+P(B^c\mid A)=\frac{19}{23}=0.8261
+$$
+
+**4.51 times larger.** And $\gamma_0=\dfrac{19}{19}=1.0000$.
+
+| | value | error |
+|---|---:|---:|
+| **truth**, $\lvert A\cap G\rvert/\lvert A\rvert=19/23$ | **0.826087** | — |
+| **exact form** $P(B^c\mid A)\gamma_0 = 0.8261\times1.0000$ | 0.826087 | $0$ |
+| **claimed form** $(1-\beta)\gamma_0 = 0.1833\times1.0000$ | 0.183333 | **0.642754** |
+
+The claimed formula is off **by a factor of 4.51** on this one classifier.
+
+## Step 6 — why it fails, and why it is not fixable by being careful
+
+Look at the counts again. Of the 22 items where the pseudo-label is wrong, **19 are items where
+classifier 0 is also wrong.** That is not coincidence — **the pseudo-label is a vote over these
+same classifiers.** When classifier 0 fails, the item is hard, so the other classifiers tend to
+fail too, so the vote fails.
+
+$$
+\boxed{A \text{ and } B^c \text{ are positively associated BY CONSTRUCTION, so independence can never hold.}}
+$$
+
+This is why it is not a small-sample issue or a dataset quirk. It is structural, and it is in
+the same direction on all six datasets (ratios 1.6× to 135×).
+
+## Step 7 — so were we wrong?
+
+Two different questions, two different answers.
+
+**As a derivation: yes, wrong.** You cannot get $(1-\beta)\gamma_j$ from the definitions. The
+step $P(B^c\mid A)\to P(B^c)$ is an unjustified substitution of a marginal for a conditional.
+
+**As a model: not wrong, but incomplete.** Every model makes assumptions. Writing
+$P(C=1\mid Z=0)=(1-\beta)\gamma_j$ is a legitimate *modelling choice* provided you say
+"we assume $\hat y \perp Z^j$". What is not legitimate is presenting it as though it followed
+from the definitions, which is what an unflagged $(1-\beta)\gamma_j$ does.
+
+And it is worth knowing the cost is not only theoretical. In the version where $\beta$ is a
+free parameter, this same factorisation is what lets $\beta$ drift to 1 and annihilate
+$\gamma$ — the arm that scored 17.11, worst of everything tested.
+
+## Step 8 — what to do
+
+$$
+\boxed{
+\begin{array}{lll}
+\text{(a) keep it, declare it} & (1-\beta)\gamma_j \text{ + one sentence stating the assumption} & \text{honest, still approximate}\\
+\text{(b) use the exact form} & P(B^c\mid A)\cdot\gamma_j,\ \text{first factor COUNTED} & \text{exact, no assumption}\\
+\end{array}}
+$$
+
+Option (b) costs you one extra count on the labeled split — the same items you already scan to
+get $\gamma_j$, just a different denominator. And recall from an earlier entry that (b) is
+numerically identical to `model_wrong`, which is already implemented and measured.
+
+My recommendation is (b) for the model and (a)-with-a-sentence only if you want to keep the
+two-factor reading for exposition.
+
+---|---:|---:|---:|---:|
 | text2sql/spider | 0.1198 | 0.0454 | **62%** | 19 |
 | text2sql/bird | 0.1535 | 0.0703 | **54%** | 57 |
 | graph/AC | 0.0668 | 0.0296 | **56%** | 205 |
