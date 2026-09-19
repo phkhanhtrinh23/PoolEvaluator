@@ -490,7 +490,135 @@ the pool produced, picks one or rejects all, and **never sees the gold label**.
 Measured on 40 random items per dataset:
 
 | dataset | judge correct | majority vote on the same items |
-|---|---:|---:|
+|
+# 2026-09-20 — `Trinh_pool_version_2.tex`: no, not implemented. I have now, and it is unidentifiable.
+
+**Answer to the question: no.** The three closed forms in that file are not what
+`pooleval/validated_em.py` computes. I implemented them exactly as written
+(`pooleval/pool_v2.py`) and ran them. The calculus is correct; **the model is not
+identifiable**, and I can show that in one measurement.
+
+## What version 2 specifies, and how it differs from what I built
+
+$$
+Z_i^j\sim\text{Bern}(\alpha_j),\qquad
+C_i^j\mid Z_i^j{=}1\sim\text{Bern}(\beta_j),\qquad
+C_i^j\mid Z_i^j{=}0\sim\text{Bern}(\gamma_j)
+$$
+
+with $C_i^j=\mathbb{I}(r_i^j=\hat y_i^{-j})$ against a **leave-one-out** majority vote.
+Three substantive differences from the current pipeline:
+
+| | version 2 | `validated_em.py` |
+|---|---|---|
+| pseudo-label | **leave-one-out** — excludes model $j$ | full vote, includes model $j$ |
+| $\beta$ | **per model**, $\beta_j$ | one scalar for the pool |
+| $\gamma$ | **fitted**, has its own M-step | **measured** on a labeled split, frozen |
+| labeled data | **none needed** — fully unsupervised | required |
+
+The leave-one-out vote is a genuine improvement and directly targets the dependence I measured
+earlier: it removes the self-reference that makes "the vote is wrong" and "model $j$ is wrong"
+correlated by construction. And you were right earlier that a per-model $\beta$ existed — it is
+here, in this file, not in the code.
+
+## Version 2 run on all six cases
+
+| case | MAE | iters | mean $\alpha$ | mean $\beta$ | mean $\gamma$ |
+|---|---:|---:|---:|---:|---:|
+| text2sql/spider | 6.40 | **2** | 0.807 | 0.966 | 0.584 |
+| text2sql/bird | 26.42 | **2** | 0.633 | 0.845 | 0.212 |
+| vision/mnist→usps | 10.20 | **2** | 0.698 | 0.890 | 0.331 |
+| vision/mnist→svhn | 49.05 | **2** | 0.613 | 0.734 | 0.304 |
+| graph/AC | 7.90 | **2** | 0.695 | 0.881 | 0.337 |
+| graph/DA | 16.69 | **2** | 0.700 | 0.892 | 0.326 |
+
+$\beta_j>\gamma_j$ holds everywhere, as the model assumes. But **it converges in 2
+iterations on every dataset**, which is the warning sign.
+
+## The problem: 8 restarts, identical likelihood, wildly different answers
+
+Spider, 8 random initialisations:
+
+| restart | log-likelihood | MAE | mean $\alpha$ |
+|---:|---:|---:|---:|
+| 0 | $-510.1106$ | 14.27 | 0.7188 |
+| 1 | $-510.1106$ | **10.75** | 0.7816 |
+| 2 | $-510.1106$ | 14.34 | 0.6299 |
+| 3 | $-510.1106$ | 20.11 | 0.8003 |
+| 4 | $-510.1106$ | 18.02 | 0.6571 |
+| 5 | $-510.1106$ | **20.50** | 0.6119 |
+| 6 | $-510.1106$ | 13.36 | 0.7123 |
+| 7 | $-510.1106$ | 14.62 | 0.6926 |
+
+$$
+\boxed{
+\begin{array}{ll}
+\text{log-likelihood spread} & 0.000000\\
+\text{MAE spread} & 9.76 \text{ accuracy points}\\
+\text{max per-model } \alpha \text{ spread} & 0.6272
+\end{array}}
+$$
+
+**Every restart is an exact global optimum. The answer they give differs by up to 9.8 MAE
+points.** The reported accuracy is a function of the initialisation, not of the data.
+
+## Why — a two-line proof
+
+Given the observed $C$, the likelihood for model $j$ factorises over items, and each item
+contributes a Bernoulli with success probability
+
+$$
+a_j \;=\; \alpha_j\beta_j+(1-\alpha_j)\gamma_j .
+$$
+
+So the entire likelihood depends on $(\alpha_j,\beta_j,\gamma_j)$ **only through the single
+number $a_j$**, whose sufficient statistic is $\sum_i C_i^j$. Three free parameters, one
+equation:
+
+$$
+\boxed{\ \text{per model: } 1 \text{ sufficient statistic}, \ 3 \text{ free parameters} \ \Longrightarrow\ \text{a 2-dimensional ridge of optima.}}
+$$
+
+Verified numerically: every restart reproduces the observed $a_j$ to $2\times10^{-16}$, while
+landing on completely different $\alpha$. For the pool as a whole that is **10 equations and 30
+unknowns**. EM converges in 2 iterations because it steps straight onto the ridge and stops.
+
+This is the standard non-identifiability of a two-component Bernoulli mixture with no
+covariates. It is not a bug in the derivation — each M-step is the correct maximiser of its own
+$Q$ term — and it is not fixable by better optimisation.
+
+## What fixes it, and why the current pipeline already does
+
+The ridge is 2-dimensional, so **two constraints per model** are needed.
+
+| constraint | supplies | already in `validated_em.py`? |
+|---|---|---|
+| Beta anchor on $\alpha_j$ from a labeled split | pins $\alpha_j$ | **yes** — $\alpha_j=\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$ |
+| Measure $\gamma_j$ on a labeled split, freeze it | pins $\gamma_j$ | **yes** — this is exactly what the measured $\gamma$ is for |
+| Tie $\beta$ across models (one scalar) | removes $M-1$ parameters | **yes** — $\beta$ is a scalar there |
+
+So the answer to "why is the labeled split needed at all" is now sharp: **it is not a
+convenience, it is what makes the model identifiable.** Version 2 drops it and becomes
+unidentifiable; the current pipeline keeps it and is not. That is a much better justification
+for the design than any I have given before.
+
+## Recommendation
+
+Do **not** adopt version 2's three-closed-form M-steps as specified. Two ways to keep what is
+good in it:
+
+1. **Keep the leave-one-out pseudo-label.** It is the one clear improvement and it is
+   orthogonal to the identifiability problem. I have it implemented in
+   `pooleval/pool_v2.py::loo_agreement` and can port it into the main pipeline as an option,
+   which would directly attack the dependence measured at 54–66% residual earlier.
+2. **Keep the per-model $\beta_j$ only if $\gamma_j$ stays measured.** With $\gamma_j$ frozen
+   and $\alpha_j$ anchored, $\beta_j$ is identified per model, and that is a strictly richer
+   model than the current scalar $\beta$ at no cost to identifiability.
+
+Option 1 is the one I would test first; it is a small change and it addresses something we
+have already measured as a real defect.
+
+---|---:|---:|
 | spider | **78%** (31/40, 9 wrong, 0 abstentions) | 75% |
 | bird | **45%** (18/40, 22 wrong, 0 abstentions) | 40% |
 
