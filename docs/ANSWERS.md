@@ -530,7 +530,87 @@ I reported the 86% sd collapse as a confirmation and left 3.73 / 3.47 / 6.89 loo
 They are not wins. **The anchored model returns the prior and learns nothing from the data.**
 
 | case | v2 + anchor | **prior only** | $\max_j\lvert\alpha_j-\pi_j\rvert$ | anchor $s$ | $N$ |
-|---|---:|---:|---:|---:|---:|
+|
+# 2026-09-20 — `collision_nobeta` vs version 2: same likelihood, different constraints
+
+**They are the same model.** Both put $\gamma_j$ directly in the $Z=0$ branch with no
+$(1-\beta)$ multiplier:
+
+$$
+P(C_i^j=1\mid Z_i^j=1)=\beta,\qquad P(C_i^j=1\mid Z_i^j=0)=\gamma_j .
+$$
+
+Per cell the likelihood is $\alpha_j\text{Bern}(\beta)+(1-\alpha_j)\text{Bern}(\gamma_j)$ in
+both. So `collision_nobeta` **is** version 2's likelihood. Everything that differs is a
+constraint placed on it.
+
+## The four differences
+
+| | version 2 | `collision_nobeta` | matters? |
+|---|---|---|---|
+| $\gamma_j$ | **fitted** by its own M-step | **measured** on a labeled split, frozen in EM | **decisive** |
+| $\beta$ | **per model**, $\beta_j$ | one **scalar** shared by the pool | yes |
+| $\alpha_j$ | $\frac1n\sum_i q_i^j$, no anchor | $\frac{\sum_i\tau_i^j+s_j\pi_j}{N+s_j}$, Beta anchor | yes |
+| pseudo-label | **leave-one-out** plain majority | full vote, $e$-discounted, includes $j$ | small (0.62 pts) |
+
+## Why the $\gamma$ difference decides everything
+
+Both models expose exactly **one sufficient statistic per model** — the agreement count
+$\sum_i C_i^j$, equivalently $a_j=\alpha_j\beta_j+(1-\alpha_j)\gamma_j$.
+
+$$
+\boxed{
+\begin{array}{lcc}
+& \text{free parameters per model} & \text{statistics per model}\\
+\text{version 2} & 3\ (\alpha_j,\beta_j,\gamma_j) & 1\\
+\texttt{collision\_nobeta} & 1\ (\alpha_j)\ +\ \tfrac1M\ \text{of a shared }\beta & 1
+\end{array}}
+$$
+
+Version 2 has a 2-dimensional ridge of optima. `collision_nobeta` removes both dimensions:
+measuring $\gamma_j$ deletes one free parameter per model outright, and tying $\beta$ across
+the pool deletes $M-1$ more. The anchor on $\alpha_j$ then adds a second constraint on the
+coordinate that gets reported.
+
+**So the labeled split is not a convenience. It is the thing that makes the same likelihood
+estimable.**
+
+## Measured: 12 identical random restarts, both models
+
+| case | version 2 | `collision_nobeta` |
+|---|---:|---:|
+| text2sql/spider | 14.88 $\pm$ 3.15 | **3.57 $\pm$ 0.00** |
+| text2sql/bird | 25.06 $\pm$ 6.61 | **3.64 $\pm$ 0.00** |
+| vision/mnist→usps | **16.41 $\pm$ 3.58** | 41.38 $\pm$ 0.70 |
+| vision/mnist→svhn | 50.26 $\pm$ 5.41 | **31.17 $\pm$ 1.66** |
+| graph/AC | **16.01 $\pm$ 2.52** | 33.56 $\pm$ 0.01 |
+| graph/DA | 18.92 $\pm$ 3.44 | **13.37 $\pm$ 0.00** |
+| **MEAN** | 23.59 $\pm$ **4.12** | 21.12 $\pm$ **0.40** |
+
+$$
+\boxed{\text{restart sd: } 4.12 \ \longrightarrow\ 0.40, \text{ a } 10\times \text{ reduction}}
+$$
+
+## Two honest qualifications
+
+**1. `collision_nobeta` is not perfectly initialisation-free either.** These restarts randomise
+$\alpha$'s starting value; with the normal start ($\alpha_0=\pi$) it scores **16.25**, not
+21.12, and usps is 32.47 rather than 41.38. The spreads are tiny (0.00–1.66) but the
+*converged point* still depends on where $\alpha$ starts on some cases. That is the two-block
+coordinate ascent — pseudo-labels and parameters updated alternately — which the code documents
+as not guaranteed monotone. It is a weaker failure than version 2's flat ridge, but it is not
+nothing.
+
+**2. Version 2 wins two cases here** (usps and AC) under random restarts. Being unidentified
+does not mean being always worse; it means the answer is not determined by the data.
+
+## One-line answer
+
+Same likelihood; version 2 fits $\gamma$ and `collision_nobeta` measures it — and that single
+difference is what separates a model with a 2-dimensional ridge of equally-optimal answers from
+one that gives roughly the same answer whatever you feed it.
+
+---|---:|---:|---:|---:|---:|
 | text2sql/spider | 3.73 | **3.73** | **0.0000** | 120.0 | 150 |
 | text2sql/bird | 3.47 | **3.47** | **0.0000** | 120.0 | 150 |
 | vision/mnist→usps | 20.33 | 29.10 | 0.2475 | 2.0 | 600 |
