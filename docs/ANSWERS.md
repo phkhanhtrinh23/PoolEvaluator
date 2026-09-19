@@ -477,7 +477,103 @@ Rows sorted best-first by `ALL`.
 ## Budget 0 — no expert
 
 | arm | text2sql | vision | graph | **ALL** |
-|---|---:|---:|---:|---:|
+|
+# 2026-09-19 — REAL LLM JUDGE: the arm ranking reverses completely
+
+Done. Every budget number reported before this entry used `OracleExpert`, a perfect expert
+that always returns the gold answer. This run replaces it with `RealJudge` on `gpt-5.6-luna`,
+which is shown the question, the schema and one executed-result preview per distinct answer
+the pool produced, picks one or rejects all, and **never sees the gold label**.
+
+## How good the judge actually is
+
+Measured on 40 random items per dataset:
+
+| dataset | judge correct | majority vote on the same items |
+|---|---:|---:|
+| spider | **78%** (31/40, 9 wrong, 0 abstentions) | 75% |
+| bird | **45%** (18/40, 22 wrong, 0 abstentions) | 40% |
+
+So it is a genuinely fallible expert — barely better than majority vote, and on BIRD it is
+**wrong more often than right**. That is the realistic deployment condition, and it is nothing
+like the oracle.
+
+## Results — MAE, text2sql, oracle versus real judge
+
+| dataset | arm | b0 | b10 oracle | b10 **judge** | b40 oracle | b40 **judge** |
+|---|---|---:|---:|---:|---:|---:|
+| spider | `collision_nobeta` | 3.57 | 2.29 | 2.89 | 4.39 | **2.83** |
+| | `model_wrong` | 3.61 | 4.44 | 2.91 | 2.66 | 4.33 |
+| | `collision_frozen` | 9.18 | 3.37 | 7.65 | **2.29** | 6.54 |
+| bird | `collision_nobeta` | 3.64 | 7.62 | 3.39 | 4.53 | **2.87** |
+| | `model_wrong` | 4.14 | 6.39 | 8.49 | **3.61** | 5.38 |
+| | `collision_frozen` | 6.63 | 9.78 | 11.48 | **3.61** | 5.76 |
+
+## The headline: the ranking inverts
+
+Mean over the two datasets at budget 40:
+
+$$
+\boxed{
+\begin{array}{lcc}
+& \textbf{oracle} & \textbf{real judge}\\
+\texttt{collision\_nobeta} & 4.46 \ \text{(worst)} & \mathbf{2.85} \ \textbf{(best)}\\
+\texttt{model\_wrong} & 3.14 & 4.86\\
+\texttt{collision\_frozen} & \mathbf{2.95} \ \textbf{(best)} & 6.15 \ \text{(worst)}
+\end{array}}
+$$
+
+**The order is exactly reversed.** `collision_frozen` — the arm I have been recommending on
+every previous table — is the best with a perfect expert and the **worst** with a real one,
+more than doubling its error from 2.95 to 6.15. `collision_nobeta` is the only arm that gets
+*better* when the expert gets worse, 4.46 → 2.85.
+
+## Why this happens
+
+The three arms differ only in how much they trust the consensus, through the multiplier on
+$\gamma_j$:
+
+| arm | multiplier | implied stance |
+|---|---|---|
+| `collision_nobeta` | $1$ | the consensus is worthless |
+| `model_wrong` | exact | the consensus is worth what it measures |
+| `collision_frozen` | $1-\hat\beta$ | the consensus is highly reliable |
+
+An arm that treats the consensus as reliable also treats *any* pinned label as reliable — and
+the validated items now carry a judge that is 78% and 45% correct. `collision_frozen` pins
+wrong labels and then propagates them confidently. `collision_nobeta` distrusts everything by
+construction, so a bad pin damages it least. The arm's single wrong assumption is a liability
+against a perfect expert and an asset against a fallible one.
+
+## What this invalidates
+
+**Every oracle-expert budget number in this file ranks the arms by how well they exploit a
+perfect expert, which is not the deployment condition.** The budget-0 column is unaffected —
+no expert is involved — and on that column `collision_nobeta` was already the winner (16.25).
+The budget-10 and budget-40 orderings should be treated as an upper bound per arm, not as a
+ranking.
+
+That does not mean the oracle runs were wasted: they isolate the estimator from judge noise,
+which is the right control. It means **both** must be reported, and the conclusion drawn from
+the real-judge column.
+
+## Caveats, stated plainly
+
+- **Two datasets, both text2sql.** Vision and graph have no real-judge path implemented, so
+  the reversal is shown only where a real LLM verifier exists. I have not shown it holds on the
+  modality that dominated the earlier averages.
+- **One judge model, one seed** per (arm, budget) cell.
+- `collision_frozen` still wins the oracle tables, and those are the ones that include vision
+  and graph. The honest summary is that **which arm wins depends on the expert's reliability,
+  and we have now measured both ends of that.**
+
+## What I would do next
+
+Implement a real verifier for vision and graph — a VLM shown the image and the pool's distinct
+predicted labels — so the reversal can be tested on the modality that actually drove the
+overall ranking. Without that, the claim is limited to text-to-SQL.
+
+---|---:|---:|---:|---:|
 | **`collision_nobeta`** | **3.61** | 33.00 | 12.15 | **16.25** |
 | `pairwise` | 3.67 | 35.32 | **12.13** | 17.04 |
 | `pairwise_calibrated` | 3.67 | 35.32 | **12.13** | 17.04 |
