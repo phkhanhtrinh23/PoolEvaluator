@@ -463,7 +463,107 @@ $1/P(\hat y\text{ wrong}\mid\text{model wrong})$. On spider that factor is 1.21�
 So the three arms bracket the truth from both sides:
 
 | | $P(C{=}1\mid Z{=}0)$, spider model 0 | vs truth 0.826 |
-|---|---:|---|
+|
+# 2026-09-19 — FULL RESULTS: every arm, three modalities, three budgets
+
+MAE in accuracy points, lower is better. Each modality column is the mean of its two
+cases: text2sql $=$ {spider, bird}, vision $=$ {mnist$\to$usps, mnist$\to$svhn},
+graph $=$ {AC, DA}. `ALL` is the unweighted mean of the three modality columns. Every arm
+runs the identical pipeline — same $e$ vote discount, same $A_\mu$ selector, same
+`OracleExpert`, same warm-start, same $(\text{old}+\text{temp})/2$ refresh — and differs
+only in the $Z=0$ branch, except the last row which additionally removes the $e$ discount.
+Rows sorted best-first by `ALL`.
+
+## Budget 0 — no expert
+
+| arm | text2sql | vision | graph | **ALL** |
+|---|---:|---:|---:|---:|
+| **`collision_nobeta`** | **3.61** | 33.00 | 12.15 | **16.25** |
+| `pairwise` | 3.67 | 35.32 | **12.13** | 17.04 |
+| `pairwise_calibrated` | 3.67 | 35.32 | **12.13** | 17.04 |
+| `model_wrong` | 3.87 | 36.72 | 14.19 | 18.26 |
+| frozen, no $e$ discount | 7.85 | 34.47 | 14.11 | 18.81 |
+| `collision_frozen` | 7.91 | 34.47 | 14.06 | 18.81 |
+| `collision` (free $\beta$) | 14.01 | **33.49** | 16.70 | 21.40 |
+
+## Budget 10
+
+| arm | text2sql | vision | graph | **ALL** |
+|---|---:|---:|---:|---:|
+| **`collision_frozen`** | 6.58 | **21.56** | 13.83 | **13.99** |
+| `model_wrong` | 5.42 | 27.47 | **12.60** | 15.16 |
+| `collision_nobeta` | **4.95** | 23.80 | 18.98 | 15.91 |
+| `pairwise_calibrated` | 5.03 | 30.52 | 16.16 | 17.23 |
+| `pairwise` | 6.33 | 34.26 | 14.55 | 18.38 |
+| `collision` (free $\beta$) | 13.27 | 27.82 | 15.57 | 18.88 |
+
+## Budget 40
+
+| arm | text2sql | vision | graph | **ALL** |
+|---|---:|---:|---:|---:|
+| **`collision_frozen`** | 2.95 | **7.36** | **9.70** | **6.67** |
+| `model_wrong` | 3.13 | 9.62 | 11.80 | 8.18 |
+| `pairwise_calibrated` | **2.26** | 26.72 | 10.12 | 13.03 |
+| frozen, no $e$ discount | 3.20 | 28.18 | 10.12 | 13.83 |
+| `pairwise` | 3.02 | 32.31 | 9.96 | 15.10 |
+| `collision_nobeta` | 4.46 | 24.37 | 16.70 | 15.18 |
+| `collision` (free $\beta$) | 10.27 | 25.84 | 15.24 | 17.11 |
+
+## What the three tables say together
+
+**1. The winner changes with the budget.** No arm is best everywhere.
+
+$$
+\boxed{
+\begin{array}{lll}
+\text{budget }0 & \texttt{collision\_nobeta} & 16.25\\
+\text{budget }10 & \texttt{collision\_frozen} & 13.99\\
+\text{budget }40 & \texttt{collision\_frozen} & \mathbf{6.67}
+\end{array}}
+$$
+
+`collision_nobeta` leads at 0 and finishes **second-to-last** at 40. `collision_frozen` is
+*sixth of seven* at budget 0 and first by a wide margin at 40. Reporting only one budget would
+invert the conclusion.
+
+**2. Vision decides the ranking; text2sql does not.** At budget 40 the text2sql column spans
+2.26–10.27 — under 8 points — while vision spans 7.36–28.18, nearly 21. The `ALL` ordering is
+essentially the vision ordering. `pairwise_calibrated` is the **best text2sql arm at budget 40
+(2.26)** and still finishes fifth overall, sunk entirely by vision's 26.72.
+
+**3. The pairwise arms are identical without a judge.** `pairwise` and `pairwise_calibrated`
+agree to the last digit at budget 0 (3.67 / 35.32 / 12.13) and separate only once validation
+starts — as they must, since the calibration is defined on validated items.
+
+**4. Graph is where the expert helps least.** Best graph numbers by budget: 12.13 → 12.60 →
+9.70. Forty oracle labels buy about 2.4 points there, against roughly 26 on vision
+(33.00 → 7.36) and 1.4 on text2sql, which is already near its floor at budget 0.
+
+**5. The free-$\beta$ collision arm is last at every budget.** 21.40, 18.88, 17.11. It is the
+only arm never to win a single modality column at any budget, apart from vision at budget 0
+(33.49) where it is a hair ahead of `collision_nobeta`'s 33.00 — and that one cell is inside
+the noise of a case where every arm is around 33–37.
+
+**6. The $e$ discount is worth nothing without a judge and 7 points with one.** Comparing the
+two `frozen` rows: 18.81 vs 18.81 at budget 0 — identical to two decimals — and 6.67 vs 13.83
+at budget 40, all of it from vision (7.36 vs 28.18).
+
+## The defensible claim
+
+All seven arms share one likelihood and differ only in what occupies the $Z=0$ branch. Written
+as a multiplier $m_j$ on the collision rate, $P(C=1\mid Z=0)=m_j\gamma_j$:
+
+| arm | $m_j$ | best at |
+|---|---|---|
+| `collision_nobeta` | $1$ | budget 0 |
+| `model_wrong` | $P(\hat y\text{ wrong}\mid Z{=}0)$, exact | never (2nd at 10 and 40) |
+| `collision_frozen` | $1-\hat\beta$, measured | budgets 10 and 40 |
+| `collision` | $1-\beta$, fitted | never |
+
+The exact multiplier is never the best choice, and the fitted one is always the worst. That
+is the result worth reporting — not a claim that any single parameterisation is correct.
+
+---|---:|---|
 | `collision_nobeta` (multiplier $=1$) | 0.952 | **too high** |
 | `model_wrong` (exact) | 0.826 | exact |
 | `collision_frozen` (multiplier $=1-\hat\beta$) | 0.183 | **far too low** |
