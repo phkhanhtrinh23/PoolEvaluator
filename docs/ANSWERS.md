@@ -510,7 +510,96 @@ with $C_i^j=\mathbb{I}(r_i^j=\hat y_i^{-j})$ against a **leave-one-out** majorit
 Three substantive differences from the current pipeline:
 
 | | version 2 | `validated_em.py` |
-|---|---|---|
+|
+# 2026-09-20 — Version-2 experiments: three runs, and it does not beat what we have
+
+Yes. Three experiments on `pooleval/pool_v2.py`, all six cases. Raw numbers in
+`results/pool_v2.json`.
+
+## Experiment 1 — version 2 exactly as specified
+
+MAE, mean $\pm$ sd over **12 random restarts**, because a single number would hide the
+identifiability problem rather than report it.
+
+| case | v2 as specified | v2 + $\alpha$ anchor | v2, default init |
+|---|---:|---:|---:|
+| text2sql/spider | 14.88 $\pm$ 3.15 | **3.73 $\pm$ 0.00** | 6.40 |
+| text2sql/bird | 25.06 $\pm$ 6.61 | **3.47 $\pm$ 0.00** | 26.42 |
+| vision/mnist→usps | 16.41 $\pm$ 3.58 | 20.86 $\pm$ 1.58 | **10.20** |
+| vision/mnist→svhn | 50.26 $\pm$ 5.41 | **76.42** $\pm$ 1.81 | 49.05 |
+| graph/AC | 16.01 $\pm$ 2.52 | **6.89 $\pm$ 0.00** | 7.90 |
+| graph/DA | 18.92 $\pm$ 3.44 | 19.01 $\pm$ 0.00 | 16.69 |
+| **MEAN** | **23.59 $\pm$ 4.12** | **21.73 $\pm$ 0.56** | **19.44** |
+
+**As specified, version 2 is worse than every existing arm at budget 0** (best existing:
+`collision_nobeta` 16.25, `pairwise` 17.04, `model_wrong` 18.26). The default-init number,
+19.44, is the most favourable reading and still loses to all three.
+
+## Experiment 2 — does the $\alpha$ anchor fix the ridge?
+
+$$
+\boxed{\text{restart sd } 4.12 \longrightarrow 0.56, \text{ an 86\% reduction}}
+$$
+
+**Yes, for the reported quantity, and this confirms the diagnosis.** Anchoring does not make
+the model identifiable — with $\alpha$ pinned, $a_j=\alpha\beta+(1-\alpha)\gamma$ is still one
+equation in the two unknowns $(\beta,\gamma)$ — but $\alpha$ is the only coordinate we report,
+so pinning it makes the output reproducible. On spider, bird and AC the sd falls to **exactly
+0.00**: the anchor fully determines $\alpha$ there.
+
+**But it buys reproducibility at the price of the prior's error.** On MNIST→SVHN the anchored
+version is **76.42**, far worse than the unanchored 50.26, because the source prior is about 86
+accuracy points wrong and the anchor pins the estimate to it. That is the same anchor-strength
+failure documented in `docs/prior_modes.md`, and it is why the main pipeline caps the anchor's
+effective sample size.
+
+## Experiment 3 — is the leave-one-out vote the good part?
+
+Same model, same restarts, only the construction of $C$ changes: leave-one-out versus a vote
+that includes model $j$.
+
+| case | LOO | full vote | $\bar a_j$ LOO | $\bar a_j$ full |
+|---|---:|---:|---:|---:|
+| text2sql/spider | **14.88** | 15.16 | 0.891 | 0.910 |
+| text2sql/bird | **25.06** | 26.54 | 0.613 | 0.654 |
+| vision/mnist→usps | **16.41** | 16.48 | 0.717 | 0.743 |
+| vision/mnist→svhn | **50.26** | 51.17 | 0.580 | 0.603 |
+| graph/AC | **16.01** | 16.38 | 0.711 | 0.737 |
+| graph/DA | **18.92** | 19.57 | 0.720 | 0.746 |
+| **MEAN** | **23.59** | 24.21 | | |
+
+$$
+\boxed{\text{LOO wins } 6/6 \text{ cases, by } 0.62 \text{ MAE points on average.}}
+$$
+
+**Consistent but small.** The direction is unanimous, which is what you would expect from a
+correction to a structural bias rather than noise, and the mechanism is visible in the last two
+columns: including model $j$ in its own vote inflates its agreement rate by 0.02–0.04 on every
+dataset, exactly the self-agreement the leave-one-out removes. But 0.62 points does not rescue
+a model that is 4–7 points behind the field.
+
+## Summary
+
+| question | answer |
+|---|---|
+| Are the three closed forms implemented? | Yes, now, exactly as written |
+| Do they beat the current arms? | **No** — 19.44 at best against 16.25 |
+| Is the model identifiable? | **No** — 12 restarts, identical likelihood, sd 4.12 |
+| Does the anchor fix it? | For $\alpha$, yes (sd $\to$ 0.56), but it imports the prior's bias |
+| Is leave-one-out worth keeping? | **Yes** — 6/6, though only 0.62 points |
+
+## What I would take forward
+
+**Port the leave-one-out vote into the main pipeline, and nothing else from version 2.** It
+wins unanimously, it is orthogonal to the identifiability problem, and it targets the
+dependence measured at 54–66% residual earlier — where the mechanism was precisely that the
+pseudo-label is a vote over the same pool. Inside the identifiable pipeline (anchored
+$\alpha$, measured frozen $\gamma$, capped anchor) it may be worth more than the 0.62 points it
+is worth inside a model that cannot pin its own parameters.
+
+That is a contained change and I can run it on all six cases at all three budgets.
+
+---|---|---|
 | pseudo-label | **leave-one-out** — excludes model $j$ | full vote, includes model $j$ |
 | $\beta$ | **per model**, $\beta_j$ | one scalar for the pool |
 | $\gamma$ | **fitted**, has its own M-step | **measured** on a labeled split, frozen |
