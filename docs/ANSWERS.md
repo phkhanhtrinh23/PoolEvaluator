@@ -432,7 +432,101 @@ whole argument.
 $N=120$ labeled items.
 
 | count | value |
-|---|---:|
+|
+# 2026-09-19 — $P(C\mid Z{=}0)=\gamma_j$ with $\beta$ kept for $Z{=}1$: never tried before, and it wins at budget 0
+
+Your model, stated exactly:
+
+$$
+\boxed{
+\begin{array}{ll}
+P(C_i^j=1\mid Z_i^j=1)=\beta, & P(C_i^j=0\mid Z_i^j=1)=1-\beta\\[2pt]
+P(C_i^j=1\mid Z_i^j=0)=\gamma_j, & P(C_i^j=0\mid Z_i^j=0)=1-\gamma_j
+\end{array}}
+$$
+
+$\beta$ is still a free parameter and still fitted; it simply no longer appears in the $Z=0$
+branch. Implemented as `gamma_mode="collision_nobeta"`. **This arm had not been run before.**
+
+## Two consequences of the form itself
+
+**1. The $\beta$ M-step returns to closed form.** With $\beta$ absent from the $Z=0$ branch,
+$Q_\beta$ falls back into the span $\mathcal{S}$ and the maximiser is a ratio of counts. No
+bounded numerical search, and the $\beta\to1$ degeneracy cannot occur, because nothing
+multiplies $\gamma$.
+
+**2. It is the $\beta=0$ special case of $(1-\beta)\gamma_j$** — it asserts the pseudo-label is
+*always* wrong. Since $\gamma_j$ is conditional on both being wrong, using it for the wider
+event "the classifier is wrong" **overstates** agreement by exactly
+$1/P(\hat y\text{ wrong}\mid\text{model wrong})$. On spider that factor is 1.21–1.40.
+
+So the three arms bracket the truth from both sides:
+
+| | $P(C{=}1\mid Z{=}0)$, spider model 0 | vs truth 0.826 |
+|---|---:|---|
+| `collision_nobeta` (multiplier $=1$) | 0.952 | **too high** |
+| `model_wrong` (exact) | 0.826 | exact |
+| `collision_frozen` (multiplier $=1-\hat\beta$) | 0.183 | **far too low** |
+
+## Results — all six cases, MAE in accuracy points
+
+| case | \multicolumn{3}{c}{nobeta} | | | model_wrong | | | frozen | | | collision | | |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| | b0 | b10 | b40 | b0 | b10 | b40 | b0 | b10 | b40 | b0 | b10 | b40 |
+| spider | **3.57** | **2.29** | 4.39 | 3.61 | 4.44 | 2.66 | 9.18 | 3.37 | **2.29** | 10.66 | 10.59 | 7.10 |
+| bird | **3.64** | 7.62 | 4.53 | 4.14 | 6.39 | **3.61** | 6.63 | 9.78 | **3.61** | 17.36 | 15.95 | 13.43 |
+| mnist→usps | 32.47 | 28.17 | 21.49 | 16.39 | 13.29 | 6.15 | 10.91 | 4.24 | **1.68** | **9.44** | **2.63** | 2.28 |
+| **mnist→svhn** | **33.53** | **19.42** | 27.25 | 57.05 | 41.64 | 13.09 | 58.03 | 38.89 | **13.03** | 57.54 | 53.00 | 49.39 |
+| graph/AC | 10.92 | 19.06 | 18.31 | **8.58** | 13.39 | **8.22** | 9.12 | 13.51 | 8.85 | 11.63 | 10.40 | 10.53 |
+| graph/DA | **13.38** | 18.90 | 15.09 | 19.79 | **11.81** | 15.37 | 19.00 | 14.15 | **10.55** | 21.77 | 20.74 | 19.95 |
+| **MEAN** | **16.25** | 15.91 | 15.18 | 18.26 | 15.16 | 8.18 | 18.81 | **13.99** | **6.67** | 21.40 | 18.88 | 17.11 |
+
+## What it shows
+
+**It is the best arm at budget 0 — the new best, 16.25.** It beats the exact form (18.26) and
+the measured-multiplier form (18.81), and wins outright on 4 of 6 cases. On MNIST→SVHN it is
+better by **24 accuracy points** (33.53 against ~57–58 for all three others), the largest
+single-case margin anywhere in this comparison, and SVHN is the hardest shift in the study.
+
+**It does not improve with the expert.** 16.25 → 15.91 → 15.18 across budgets 0, 10, 40 — a
+total gain of **1.07 points** where `collision_frozen` gains 12.14. On SVHN it goes
+33.53 → 19.42 → **27.25**, worse at 40 than at 10.
+
+$$
+\boxed{
+\begin{array}{ll}
+\text{best without a judge} & \texttt{collision\_nobeta}\ (16.25)\\
+\text{best with a judge} & \texttt{collision\_frozen}\ (6.67)
+\end{array}}
+$$
+
+## Why, most likely
+
+The arm asserts the pseudo-label is always wrong. That is badly false on easy data — on
+MNIST→USPS the vote is right about 99.7% of the time, and the arm is 32.47 there, its worst
+relative showing. It is roughly *right* on MNIST→SVHN, where the vote genuinely is mostly
+wrong, and that is exactly where it wins by 24 points.
+
+So it is not a better model. It is a model whose single wrong assumption happens to point the
+right way under severe shift, which is precisely the regime where the prior is catastrophic and
+every other arm is anchored to a badly wrong number. It buys robustness at budget 0 by
+refusing to trust the consensus at all.
+
+The flat response to the expert follows from the same thing: $\gamma_j$ is the only quantity in
+the $Z=0$ branch and the arm has no way to revise its belief that the consensus is worthless,
+so revealing true labels cannot talk it out of that.
+
+## Recommendation
+
+Worth reporting, **not** worth making the default. Two honest uses:
+
+- as the **budget-0 configuration** — if no expert is available, it is the best of the four;
+- as evidence for the paper's real story: the three arms differ only in the multiplier on
+  $\gamma_j$ (1, exact, or $1-\hat\beta$), and which one wins depends entirely on the budget
+  and the severity of shift. That is a cleaner and more defensible finding than claiming any
+  one of them is correct.
+
+---|---:|
 | $\lvert A\rvert$ — classifier 0 wrong | 23 |
 | $\lvert B^c\rvert$ — pseudo-label wrong | 22 |
 | $\lvert A\cap B^c\rvert$ — both wrong | 19 |
