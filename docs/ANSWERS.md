@@ -522,7 +522,71 @@ MAE, mean $\pm$ sd over **12 random restarts**, because a single number would hi
 identifiability problem rather than report it.
 
 | case | v2 as specified | v2 + $\alpha$ anchor | v2, default init |
-|---|---:|---:|---:|
+|
+# 2026-09-20 (correction) — "v2 + anchor" is not a good result. It is the prior.
+
+You were right to question those numbers, and my previous entry presented them misleadingly.
+I reported the 86% sd collapse as a confirmation and left 3.73 / 3.47 / 6.89 looking like wins.
+They are not wins. **The anchored model returns the prior and learns nothing from the data.**
+
+| case | v2 + anchor | **prior only** | $\max_j\lvert\alpha_j-\pi_j\rvert$ | anchor $s$ | $N$ |
+|---|---:|---:|---:|---:|---:|
+| text2sql/spider | 3.73 | **3.73** | **0.0000** | 120.0 | 150 |
+| text2sql/bird | 3.47 | **3.47** | **0.0000** | 120.0 | 150 |
+| vision/mnist→usps | 20.33 | 29.10 | 0.2475 | 2.0 | 600 |
+| vision/mnist→svhn | 74.57 | 85.88 | 0.4285 | 2.0 | 600 |
+| graph/AC | 6.89 | **6.89** | **0.0001** | 32.2 | 600 |
+| graph/DA | 19.01 | **19.01** | **0.0001** | 31.9 | 600 |
+
+On four of six cases the fitted $\alpha$ equals the prior $\pi$ to four decimal places, and the
+MAE matches prior-only exactly. The "good" text2sql and graph numbers are simply the prior
+accuracy, which we already had for free and which needs no EM at all.
+
+## This is stronger evidence for the ridge than the restart test was
+
+Look at graph/AC and DA: the anchor has effective sample size $s\approx32$ against $N=600$
+items — about **5% of the weight**. A model with any information in its likelihood would move
+$\alpha$ substantially away from $\pi$. It moves it by $0.0001$.
+
+$$
+\boxed{\text{A 5\%-weight anchor fully determines } \alpha \iff \text{the likelihood is exactly flat in } \alpha.}
+$$
+
+That is the ridge, demonstrated more sharply than by 12 restarts. The data contributes nothing
+to the accuracy estimate; whatever pins $\alpha$ first, wins.
+
+The vision rows are the exception that proves it: there $s\approx2$ (the binomial variance
+$p(1-p)$ is tiny because the source accuracy is near 1), so the anchor is genuinely weak,
+$\alpha$ does move — and the answer is bad, 74.57 on SVHN.
+
+## So: is v2 + anchor better than collision / both_wrong / model_wrong?
+
+**No.** Ranked at budget 0, mean over the six cases:
+
+| arm | MAE b0 |
+|---|---:|
+| `collision_nobeta` | **16.25** |
+| `pairwise` | 17.04 |
+| `model_wrong` | 18.26 |
+| `collision_frozen` (= `both_wrong`) | 18.81 |
+| `collision` (free $\beta$) | 21.40 |
+| **v2 + $\alpha$ anchor** | **21.73** ← worst |
+
+It is last. And the per-case picture is worse than the mean suggests, because where it looks
+best it is contributing nothing, and where it actually engages with the data — vision — it
+produces 74.57.
+
+## What I should have written
+
+The anchor does not fix version 2. It **conceals** the identifiability failure by overwriting
+the unidentified parameter with a number from outside the model. The sd collapsing to 0.00 was
+not stability, it was $\alpha$ being pinned to $\pi$ regardless of the data — which is exactly
+what a flat likelihood plus any prior will always produce.
+
+The conclusion from the previous entry stands and is now better supported: **take the
+leave-one-out vote from version 2 (6/6, 0.62 points) and nothing else.**
+
+---|---:|---:|---:|
 | text2sql/spider | 14.88 $\pm$ 3.15 | **3.73 $\pm$ 0.00** | 6.40 |
 | text2sql/bird | 25.06 $\pm$ 6.61 | **3.47 $\pm$ 0.00** | 26.42 |
 | vision/mnist→usps | 16.41 $\pm$ 3.58 | 20.86 $\pm$ 1.58 | **10.20** |
