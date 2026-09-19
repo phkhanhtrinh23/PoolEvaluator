@@ -55,7 +55,8 @@ def loo_agreement(obs):
     return C
 
 
-def em_v2(C, init=None, max_iters=500, tol=1e-10, seed=0):
+def em_v2(C, init=None, max_iters=500, tol=1e-10, seed=0,
+          prior=None, prior_strength=0.0):
     """Fit ``(alpha, beta, gamma)`` by the three closed-form M-steps.
 
     Returns a dict with the parameters, the responsibilities ``q``, the observed-data
@@ -63,6 +64,14 @@ def em_v2(C, init=None, max_iters=500, tol=1e-10, seed=0):
     ``alpha``/``beta``/``gamma``; anything absent is drawn from the default start
     (alpha 0.7, beta 0.9, gamma 0.3), which encodes the model's own ordering assumption
     ``beta > gamma``.
+
+    ``prior``/``prior_strength`` add the Beta anchor of ``validated_em``:
+
+        alpha[j] = (sum_i q[i,j] + s_j pi_j) / (n + s_j)
+
+    The anchor does not make the model identifiable -- with alpha pinned, a_j still leaves
+    one equation in the two unknowns (beta, gamma).  It pins the ONE coordinate that is
+    reported, which is what the restart spread below actually measures.
     """
     C = np.asarray(C, dtype=float)
     M, N = C.shape
@@ -84,7 +93,11 @@ def em_v2(C, init=None, max_iters=500, tol=1e-10, seed=0):
         trace.append(float(np.log(denom).sum()))
 
         # M-step: all three in closed form
-        alpha = _clip(q.mean(axis=1))
+        if prior is None:
+            alpha = _clip(q.mean(axis=1))
+        else:
+            sj = np.broadcast_to(np.asarray(prior_strength, float), (M,))
+            alpha = _clip((q.sum(axis=1) + sj * np.asarray(prior, float)) / (N + sj))
         beta = _clip((q * C).sum(axis=1) / np.clip(q.sum(axis=1), EPS, None))
         gamma = _clip(((1.0 - q) * C).sum(axis=1)
                       / np.clip((1.0 - q).sum(axis=1), EPS, None))
