@@ -26,7 +26,7 @@ resolve ambiguous items.
   and full Spider/BIRD evaluation.
 
 The two manuscript figures are committed as README assets. PDFs and exploratory
-reports are deliberately absent from `main`; the paper itself remains the source of
+reports are deliberately absent from `main`. The paper itself remains the source of
 truth for tables and derivations.
 
 ## 1. Create the environment
@@ -59,7 +59,7 @@ used throughout this README:
 
 ```bash
 export POOLEVAL_DATASETS="$PWD/datasets"
-mkdir -p "$POOLEVAL_DATASETS"/{text2sql,image,node,context}
+mkdir -p "$POOLEVAL_DATASETS"/{text2sql,image,node}
 ```
 
 ### Text2SQL datasets
@@ -68,11 +68,11 @@ mkdir -p "$POOLEVAL_DATASETS"/{text2sql,image,node,context}
 |---|---|---|---|
 | Spider | [project and download page](https://yale-lily.github.io/spider), [evaluation repository](https://github.com/taoyds/spider) | `datasets/text2sql/spider/` | Download the data archive from the project page. |
 | BIRD | [project and download page](https://bird-bench.github.io/) | `datasets/text2sql/bird/` | The project page links the current train/dev database packages. |
-| Spider 2.0 | [official repository](https://github.com/xlang-ai/Spider2), [project page](https://spider2-sql.github.io/) | `datasets/text2sql/spider2/` | Some variants use BigQuery or Snowflake; follow the upstream setup for the selected variant. |
-| BEAVER | [official repository](https://github.com/beaverbench/beaver) | `datasets/text2sql/beaver/` | Gated Hugging Face data; authenticate and run the repository's `data/download_hf.py`. |
-| ScienceBenchmark | [official dataset page](https://sciencebenchmark.cloudlab.zhaw.ch/) | `datasets/text2sql/sciencebenchmark/` | The public package is linked as **ScienceBenchmark Dataset**; the test set remains hidden. |
+| Spider 2.0 | [official repository](https://github.com/xlang-ai/Spider2), [project page](https://spider2-sql.github.io/) | `datasets/text2sql/spider2/` | Some variants use BigQuery or Snowflake. Follow the upstream setup for the selected variant. |
+| BEAVER | [official repository](https://github.com/beaverbench/beaver) | `datasets/text2sql/beaver/` | Gated Hugging Face data. Authenticate and run the repository's `data/download_hf.py`. |
+| ScienceBenchmark | [official dataset page](https://sciencebenchmark.cloudlab.zhaw.ch/) | `datasets/text2sql/sciencebenchmark/` | The public package is linked as **ScienceBenchmark Dataset**. The test set remains hidden. |
 | EntSQL | [paper page](https://arxiv.org/abs/2606.03363) | `datasets/text2sql/entsql/` | No public dataset or official code release could be verified as of 23 September 2026. Do not substitute an unofficial dataset silently. |
-| LiveSQLBench | [official repository](https://github.com/bird-bench/livesqlbench), [project page](https://livesqlbench.ai/) | `datasets/text2sql/livesqlbench/` | Clone the desired Hugging Face release as described upstream; full ground truth is distributed on request. |
+| LiveSQLBench | [official repository](https://github.com/bird-bench/livesqlbench), [project page](https://livesqlbench.ai/) | `datasets/text2sql/livesqlbench/` | Clone the desired Hugging Face release as described upstream. Full ground truth is distributed on request. |
 
 The current executable Text2SQL loader covers Spider and BIRD. Arrange those two as
 follows after downloading and preprocessing them into the paper's JSON schema:
@@ -91,7 +91,7 @@ datasets/text2sql/
     └── train/train_databases/<db_id>/<db_id>.sqlite
 ```
 
-Each metadata file is a JSON list whose rows contain `db_id`, `question`, and `sql`;
+Each metadata file is a JSON list whose rows contain `db_id`, `question`, and `sql`.
 `schema` and `evidence` are optional. Point the pipeline at the layout above with:
 
 ```bash
@@ -107,7 +107,7 @@ stored elsewhere, pass `--fusion-sql-root`, `--bird-metadata-root`, and
 above when using `scripts/run_all.sh`. The loaders skip Git-LFS pointer stubs and
 require materialized SQLite files larger than 4 KiB. The other five Text2SQL
 benchmarks need dataset-specific metadata/database adapters before they can enter the
-common `Text2SQLItem` interface; their upstream SQL dialects are not interchangeable.
+common `Text2SQLItem` interface. Their upstream SQL dialects are not interchangeable.
 
 ### Image-classification datasets
 
@@ -130,7 +130,7 @@ on the seven target datasets shown below.
 MNIST, CIFAR-10, USPS, and SVHN can be materialized directly into their listed
 directories with their `torchvision.datasets` classes and `download=True`. ImageNet
 requires accepting its access terms. Preserve each archive's upstream class-directory
-names and map them to the official ImageNet-1K indices; do not derive labels by sorting
+names and map them to the official ImageNet-1K indices. Do not derive labels by sorting
 folder names independently for each target.
 
 ### Node-classification datasets
@@ -144,12 +144,6 @@ folder names independently for each target.
 Load graph datasets as PyG `Data` objects, retain the official train/validation/test or
 OOD masks, and pass the selected target graph to `predict_nodes()`. Released graph
 language models additionally require `graph.node_prompts` and the target class names.
-
-### Contextual dataset mentioned in the introduction
-
-[DataComp](https://github.com/mlfoundations/datacomp) motivates dataset growth in the
-paper but is not used in an experiment. If it is downloaded for a separate study, keep
-it under `datasets/context/datacomp/`; its largest pools require hundreds of terabytes.
 
 ## 3. Inspect, download, and load the paper model pools
 
@@ -183,15 +177,15 @@ python -m pooleval.models load --task node     --cache-dir checkpoints
 ```
 
 The large 70B/72B checkpoints need a multi-GPU machine. `device_map=auto` and
-automatic dtype are used. `ModelPool.iter_load()` is the programmatic entry point;
+automatic dtype are used. `ModelPool.iter_load()` is the programmatic entry point.
 [`pooleval/adapters.py`](pooleval/adapters.py) turns loaded members into Text2SQL,
 image, or node predictions. The two LLaGA entries consist of a Vicuna base plus a
 released projector. GraphGPT additionally downloads its released graph encoder.
 GraphGPT, GraphPFN, and LLaGA retain their official runtimes because their custom graph
 types are not supported by Transformers `AutoModel`. They enter the common adapter via
 `graph.external_runner(checkpoint, graph, class_names)`. GraphPFN's public repository
-contains graph-adapter weights, but its required LimiX backbone has a separate license;
-obtain that backbone under its upstream terms before running GraphPFN. Local checkpoint
+contains graph-adapter weights, but its required LimiX backbone has a separate license.
+Obtain that backbone under its upstream terms before running GraphPFN. Local checkpoint
 paths are retained in `LoadedModel.local_path`.
 
 ## 4. Create EX-Extended database instances
@@ -230,7 +224,7 @@ export ANTHROPIC_API_KEY=...
 GPT-5.4 and GPT-5.5 use the OpenAI Responses API with strict JSON-schema output.
 Claude Opus 5.5 uses Anthropic’s Messages API. An OpenAI key cannot authenticate to
 Anthropic, so `ANTHROPIC_API_KEY` is required for the requested three-member ensemble.
-By default a missing provider is reported and the available judges continue; pass
+By default a missing provider is reported and the available judges continue. Pass
 `--require-all-judges` for strict three-member behavior.
 
 The manuscript draft names Claude Opus 4.5, whereas this artifact intentionally uses
@@ -274,8 +268,8 @@ The Text2SQL execution path is:
 7. Write estimated accuracies, ranking, true held-out EX-Extended metrics, and run
    metadata to `artifacts/<dataset>_report.json`.
 
-Gold SQL is used only to compute calibration priors and post-hoc evaluation metrics;
-it is never included in a target model prompt or judge prompt.
+Gold SQL is used only to compute calibration priors and post-hoc evaluation metrics.
+It is never included in a target model prompt or judge prompt.
 
 ## 7. Run everything from one script
 
@@ -314,7 +308,7 @@ DB_SMOKE_LIMIT=2         # databases per dataset in the initial database smoke t
 
 Running the entire appendix pools requires the corresponding image and graph datasets
 and class mappings. Load those datasets in the standard torchvision/PyG form, then
-call `predict_images()` or `predict_nodes()` from `pooleval.adapters`; both return the
+call `predict_images()` or `predict_nodes()` from `pooleval.adapters`. Both return the
 `[items]` label vector consumed by the same `PoolEvaluator.fit()` API.
 
 ## 8. Tests and repository map
