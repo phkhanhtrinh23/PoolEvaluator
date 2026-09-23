@@ -54,37 +54,101 @@ if the normal extra does not match the installed PyTorch/CUDA build.
 
 ## 2. Configure the datasets
 
-The defaults match the local machine used for this artifact:
+Keep downloaded data outside Git under one root. The paths below are the convention
+used throughout this README:
+
+```bash
+export POOLEVAL_DATASETS="$PWD/datasets"
+mkdir -p "$POOLEVAL_DATASETS"/{text2sql,image,node,context}
+```
+
+### Text2SQL datasets
+
+| Dataset | Official source | Save or extract to | Access notes |
+|---|---|---|---|
+| Spider | [project and download page](https://yale-lily.github.io/spider), [evaluation repository](https://github.com/taoyds/spider) | `datasets/text2sql/spider/` | Download the data archive from the project page. |
+| BIRD | [project and download page](https://bird-bench.github.io/) | `datasets/text2sql/bird/` | The project page links the current train/dev database packages. |
+| Spider 2.0 | [official repository](https://github.com/xlang-ai/Spider2), [project page](https://spider2-sql.github.io/) | `datasets/text2sql/spider2/` | Some variants use BigQuery or Snowflake; follow the upstream setup for the selected variant. |
+| BEAVER | [official repository](https://github.com/beaverbench/beaver) | `datasets/text2sql/beaver/` | Gated Hugging Face data; authenticate and run the repository's `data/download_hf.py`. |
+| ScienceBenchmark | [official dataset page](https://sciencebenchmark.cloudlab.zhaw.ch/) | `datasets/text2sql/sciencebenchmark/` | The public package is linked as **ScienceBenchmark Dataset**; the test set remains hidden. |
+| EntSQL | [paper page](https://arxiv.org/abs/2606.03363) | `datasets/text2sql/entsql/` | No public dataset or official code release could be verified as of 23 September 2026. Do not substitute an unofficial dataset silently. |
+| LiveSQLBench | [official repository](https://github.com/bird-bench/livesqlbench), [project page](https://livesqlbench.ai/) | `datasets/text2sql/livesqlbench/` | Clone the desired Hugging Face release as described upstream; full ground truth is distributed on request. |
+
+The current executable Text2SQL loader covers Spider and BIRD. Arrange those two as
+follows after downloading and preprocessing them into the paper's JSON schema:
 
 ```text
-/mnt/win_d/data_FusionSQL/
+datasets/text2sql/
 ├── spider/
 │   ├── sft_spider_dev_text2sql.json
 │   ├── sft_spider_train_text2sql.json
 │   ├── database/<db_id>/<db_id>.sqlite
 │   └── test_database/<db_id>/<db_id>.sqlite
-
-/mnt/win_d/data/
-├── sft_bird_dev_text2sql.json
-├── sft_bird_train_text2sql.json
-└── sft_data_collections/bird/
+└── bird/
+    ├── sft_bird_dev_text2sql.json
+    ├── sft_bird_train_text2sql.json
     ├── dev/dev_databases/<db_id>/<db_id>.sqlite
     └── train/train_databases/<db_id>/<db_id>.sqlite
 ```
 
-The path mentioned in the original notes was `/mnt/win_d/data_FuionsQL`; the
-directory present on this machine is `/mnt/win_d/data_FusionSQL` (correct spelling).
-Override any location with environment variables:
+Each metadata file is a JSON list whose rows contain `db_id`, `question`, and `sql`;
+`schema` and `evidence` are optional. Point the pipeline at the layout above with:
 
 ```bash
-export POOLEVAL_DATA_ROOT=/path/to/data_FusionSQL
-export BIRD_METADATA_ROOT=/path/to/bird/json/files
-export BIRD_DATABASE_ROOT=/path/to/bird/database/root
-export POOLEVAL_ARTIFACT_ROOT=/fast/disk/pooleval_artifacts
+export POOLEVAL_DATA_ROOT="$POOLEVAL_DATASETS/text2sql"
+export BIRD_METADATA_ROOT="$POOLEVAL_DATASETS/text2sql/bird"
+export BIRD_DATABASE_ROOT="$POOLEVAL_DATASETS/text2sql/bird"
+export POOLEVAL_ARTIFACT_ROOT="$PWD/artifacts"
 ```
 
-The loaders skip Git-LFS pointer stubs and require materialized SQLite files larger
-than 4 KiB.
+The configuration defaults retain the experiment-machine locations
+`/mnt/win_d/data_FusionSQL` and `/mnt/win_d/data`; the environment variables above
+override them on a new machine. The loaders skip Git-LFS pointer stubs and require
+materialized SQLite files larger than 4 KiB. The other five Text2SQL benchmarks need
+dataset-specific metadata/database adapters before they can enter the common
+`Text2SQLItem` interface; their upstream SQL dialects are not interchangeable.
+
+### Image-classification datasets
+
+The paper uses MNIST, CIFAR-10, and ImageNet as labeled source datasets and evaluates
+on the seven target datasets shown below.
+
+| Role | Dataset | Official source | Save or extract to |
+|---|---|---|---|
+| Source | MNIST | [official dataset page](https://yann.lecun.org/exdb/mnist/) | `datasets/image/mnist/` |
+| Source | CIFAR-10 | [official dataset page](https://www.cs.toronto.edu/~kriz/cifar.html) | `datasets/image/cifar10/` |
+| Source | ImageNet-1K (ILSVRC 2012) | [official download page](https://www.image-net.org/download.php) | `datasets/image/imagenet/` with `train/` and `val/` class directories |
+| Target | USPS | [torchvision source and download URLs](https://docs.pytorch.org/vision/stable/_modules/torchvision/datasets/usps.html) | `datasets/image/usps/` |
+| Target | SVHN | [official dataset page](http://ufldl.stanford.edu/housenumbers/) | `datasets/image/svhn/` |
+| Target | CIFAR-10.1 | [official repository](https://github.com/modestyachts/CIFAR-10.1) | `datasets/image/cifar10.1/` |
+| Target | CIFAR-10-C | [official Zenodo record](https://zenodo.org/records/2535967), [repository](https://github.com/hendrycks/robustness) | `datasets/image/cifar10-c/` |
+| Target | ImageNet-V2 | [official repository](https://github.com/modestyachts/ImageNetV2) | `datasets/image/imagenet-v2/` |
+| Target | ImageNet-R | [official repository](https://github.com/hendrycks/imagenet-r) | `datasets/image/imagenet-r/` |
+| Target | ImageNet-Sketch | [official repository](https://github.com/HaohanWang/ImageNet-Sketch) | `datasets/image/imagenet-sketch/` |
+
+MNIST, CIFAR-10, USPS, and SVHN can be materialized directly into their listed
+directories with their `torchvision.datasets` classes and `download=True`. ImageNet
+requires accepting its access terms. Preserve each archive's upstream class-directory
+names and map them to the official ImageNet-1K indices; do not derive labels by sorting
+folder names independently for each target.
+
+### Node-classification datasets
+
+| Dataset | Official source | Save or extract to | Access notes |
+|---|---|---|---|
+| ACMv9, Citationv1, DBLPv7 | [GNNEvaluator repository and dataset link](https://github.com/Amanda-Zheng/GNNEvaluator) | `datasets/node/gnnevaluator/{acmv9,citationv1,dblpv7}/` | Use the Google Drive folder linked under **Instructions** in the repository. |
+| ogbn-arxiv | [official OGB documentation](https://ogb.stanford.edu/docs/nodeprop/#ogbn-arxiv) | `datasets/node/ogb/` | `PygNodePropPredDataset(name="ogbn-arxiv", root=...)` downloads it automatically. |
+| GOOD-Cora, GOOD-Twitch, GOOD-WebKB | [official GOOD repository](https://github.com/divelab/GOOD), [dataset API](https://good.readthedocs.io/en/latest/_autosummary/GOOD.data.good_datasets.html) | `datasets/node/good/{GOODCora,GOODTwitch,GOODWebKB}/` | Use the predefined GOOD domain and shift splits from the paper experiment. |
+
+Load graph datasets as PyG `Data` objects, retain the official train/validation/test or
+OOD masks, and pass the selected target graph to `predict_nodes()`. Released graph
+language models additionally require `graph.node_prompts` and the target class names.
+
+### Contextual dataset mentioned in the introduction
+
+[DataComp](https://github.com/mlfoundations/datacomp) motivates dataset growth in the
+paper but is not used in an experiment. If it is downloaded for a separate study, keep
+it under `datasets/context/datacomp/`; its largest pools require hundreds of terabytes.
 
 ## 3. Inspect, download, and load the paper model pools
 

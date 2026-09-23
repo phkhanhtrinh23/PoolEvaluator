@@ -14,5 +14,6 @@ results/*.log
 zoo_artifacts/
 artifacts/
 checkpoints/
+datasets/
 db_instances/
 .cache/
