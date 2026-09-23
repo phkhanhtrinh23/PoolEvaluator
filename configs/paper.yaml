@@ -1,9 +1,9 @@
 seed: 42
 
 data:
-  fusion_sql_root: /mnt/win_d/data_FusionSQL
-  bird_metadata_root: /mnt/win_d/data
-  bird_database_root: /mnt/win_d/data/sft_data_collections/bird
+  fusion_sql_root: datasets/text2sql
+  bird_metadata_root: datasets/text2sql/bird
+  bird_database_root: datasets/text2sql/bird
   output_root: artifacts
 
 method:

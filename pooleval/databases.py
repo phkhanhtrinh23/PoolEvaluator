@@ -159,9 +159,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--split", choices=["target", "train"], default="target")
     parser.add_argument("--output-dir", default="db_instances")
     parser.add_argument("--limit-databases", type=int)
-    parser.add_argument("--fusion-sql-root", default="/mnt/win_d/data_FusionSQL")
-    parser.add_argument("--bird-metadata-root", default="/mnt/win_d/data")
-    parser.add_argument("--bird-database-root", default="/mnt/win_d/data/sft_data_collections/bird")
+    parser.add_argument("--fusion-sql-root", default="datasets/text2sql")
+    parser.add_argument("--bird-metadata-root", default="datasets/text2sql/bird")
+    parser.add_argument("--bird-database-root", default="datasets/text2sql/bird")
     args = parser.parse_args(argv)
     datasets = ("spider", "bird") if args.dataset == "all" else (args.dataset,)
     total = 0

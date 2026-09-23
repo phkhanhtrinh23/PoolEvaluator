@@ -25,9 +25,9 @@ class Text2SQLItem:
 def dataset_layout(
     dataset: str,
     split: str,
-    fusion_root: str | Path = "/mnt/win_d/data_FusionSQL",
-    bird_metadata_root: str | Path = "/mnt/win_d/data",
-    bird_database_root: str | Path = "/mnt/win_d/data/sft_data_collections/bird",
+    fusion_root: str | Path = "datasets/text2sql",
+    bird_metadata_root: str | Path = "datasets/text2sql/bird",
+    bird_database_root: str | Path = "datasets/text2sql/bird",
 ) -> tuple[Path, list[Path]]:
     fusion = Path(fusion_root)
     bird_meta = Path(bird_metadata_root)

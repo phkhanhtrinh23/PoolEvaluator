@@ -8,7 +8,7 @@ resolve ambiguous items.
 
 ![PoolEvaluator pipeline](assets/pipeline.png)
 
-![Motivation: estimation and ranking error versus latency](assets/motivation.png)
+<!-- ![Motivation: estimation and ranking error versus latency](assets/motivation.png) -->
 
 ## What is included
 
@@ -101,12 +101,13 @@ export BIRD_DATABASE_ROOT="$POOLEVAL_DATASETS/text2sql/bird"
 export POOLEVAL_ARTIFACT_ROOT="$PWD/artifacts"
 ```
 
-The configuration defaults retain the experiment-machine locations
-`/mnt/win_d/data_FusionSQL` and `/mnt/win_d/data`; the environment variables above
-override them on a new machine. The loaders skip Git-LFS pointer stubs and require
-materialized SQLite files larger than 4 KiB. The other five Text2SQL benchmarks need
-dataset-specific metadata/database adapters before they can enter the common
-`Text2SQLItem` interface; their upstream SQL dialects are not interchangeable.
+The portable defaults use `datasets/text2sql/` inside the repository. For a dataset
+stored elsewhere, pass `--fusion-sql-root`, `--bird-metadata-root`, and
+`--bird-database-root` to the Python entry points, or set the environment variables
+above when using `scripts/run_all.sh`. The loaders skip Git-LFS pointer stubs and
+require materialized SQLite files larger than 4 KiB. The other five Text2SQL
+benchmarks need dataset-specific metadata/database adapters before they can enter the
+common `Text2SQLItem` interface; their upstream SQL dialects are not interchangeable.
 
 ### Image-classification datasets
 

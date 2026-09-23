@@ -6,9 +6,10 @@ cd "$repo_root"
 
 mode="${MODE:-smoke}"
 artifact_root="${POOLEVAL_ARTIFACT_ROOT:-artifacts}"
-data_root="${POOLEVAL_DATA_ROOT:-/mnt/win_d/data_FusionSQL}"
-bird_metadata_root="${BIRD_METADATA_ROOT:-/mnt/win_d/data}"
-bird_database_root="${BIRD_DATABASE_ROOT:-/mnt/win_d/data/sft_data_collections/bird}"
+dataset_root="${POOLEVAL_DATASETS:-$repo_root/datasets}"
+data_root="${POOLEVAL_DATA_ROOT:-$dataset_root/text2sql}"
+bird_metadata_root="${BIRD_METADATA_ROOT:-$dataset_root/text2sql/bird}"
+bird_database_root="${BIRD_DATABASE_ROOT:-$dataset_root/text2sql/bird}"
 
 python -m pytest -q
 python -m pooleval.models list --task all
