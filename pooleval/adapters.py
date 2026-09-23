@@ -11,6 +11,20 @@ from .models import LoadedModel
 _SQL = re.compile(r"\b(?:SELECT|WITH)\b.*", re.IGNORECASE | re.DOTALL)
 
 
+def _move_batch_to_model(batch: dict[str, Any], model: Any) -> dict[str, Any]:
+    """Move tensors to a model and match its floating-point inference dtype."""
+    parameter = next(model.parameters())
+    moved: dict[str, Any] = {}
+    for key, value in batch.items():
+        if hasattr(value, "is_floating_point") and value.is_floating_point():
+            moved[key] = value.to(device=parameter.device, dtype=parameter.dtype)
+        elif hasattr(value, "to"):
+            moved[key] = value.to(parameter.device)
+        else:
+            moved[key] = value
+    return moved
+
+
 def text2sql_prompt(question: str, schema: str, evidence: str = "") -> str:
     evidence_block = f"\nEvidence: {evidence}" if evidence else ""
     return (
@@ -26,8 +40,7 @@ def predict_text2sql(loaded: LoadedModel, prompts: Sequence[str], max_new_tokens
     output: list[str] = []
     for prompt in prompts:
         batch = tokenizer(prompt, return_tensors="pt")
-        device = next(loaded.model.parameters()).device
-        batch = {key: value.to(device) for key, value in batch.items()}
+        batch = _move_batch_to_model(batch, loaded.model)
         with torch.inference_mode():
             generated = loaded.model.generate(**batch, max_new_tokens=max_new_tokens, do_sample=False)
         if not getattr(loaded.model.config, "is_encoder_decoder", False):
@@ -44,17 +57,18 @@ def predict_images(loaded: LoadedModel, images: Sequence[Any], class_names: Sequ
 
     if loaded.spec.backend == "timm":
         batch = torch.stack([loaded.processor(image) for image in images])
-        device = next(loaded.model.parameters()).device
+        parameter = next(loaded.model.parameters())
         with torch.inference_mode():
-            return loaded.model(batch.to(device)).argmax(-1).cpu().tolist()
+            return loaded.model(
+                batch.to(device=parameter.device, dtype=parameter.dtype)
+            ).argmax(-1).cpu().tolist()
     processor = loaded.processor
     kwargs = {"images": list(images), "return_tensors": "pt"}
     if loaded.spec.backend == "zero_shot_image":
         kwargs["text"] = [f"a photo of {name}" for name in class_names]
         kwargs["padding"] = True
     batch = processor(**kwargs)
-    device = next(loaded.model.parameters()).device
-    batch = {key: value.to(device) for key, value in batch.items()}
+    batch = _move_batch_to_model(batch, loaded.model)
     with torch.inference_mode():
         result = loaded.model(**batch)
     logits = getattr(result, "logits_per_image", None)
@@ -69,11 +83,14 @@ def predict_nodes(loaded: LoadedModel, graph: Any, class_names: Sequence[str] | 
 
     if loaded.spec.backend == "pyg":
         loaded.model.eval()
+        parameter = next(loaded.model.parameters())
+        x = graph.x.to(device=parameter.device, dtype=parameter.dtype)
+        edge_index = graph.edge_index.to(parameter.device)
         with torch.inference_mode():
             try:
-                logits = loaded.model(graph.x, graph.edge_index)
+                logits = loaded.model(x, edge_index)
             except TypeError:
-                logits = loaded.model(graph.x)
+                logits = loaded.model(x)
         return logits.argmax(-1).cpu().tolist()
     if loaded.spec.backend == "external":
         runner = getattr(graph, "external_runner", None)

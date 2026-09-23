@@ -176,8 +176,11 @@ python -m pooleval.models load --task image    --cache-dir checkpoints
 python -m pooleval.models load --task node     --cache-dir checkpoints
 ```
 
-The large 70B/72B checkpoints need a multi-GPU machine. `device_map=auto` and
-automatic dtype are used. `ModelPool.iter_load()` is the programmatic entry point.
+The large 70B/72B checkpoints need a multi-GPU machine. `device_map=auto` is used.
+Local Transformers, timm, and PyG inference explicitly requests bfloat16 on supported
+CUDA hardware and safely falls back to float32 elsewhere. Pass `--dtype float32` to
+force float32 or `--dtype auto` to delegate dtype selection to Transformers.
+`ModelPool.iter_load()` is the programmatic entry point.
 [`pooleval/adapters.py`](pooleval/adapters.py) turns loaded members into Text2SQL,
 image, or node predictions. The two LLaGA entries consist of a Vicuna base plus a
 released projector. GraphGPT additionally downloads its released graph encoder.
@@ -253,6 +256,29 @@ python -m pooleval.pipeline text2sql \
 Enable judge refinement by adding `--judge`. Predictions, modified databases, and
 reports are cached under `artifacts/`, so interrupted runs are resumable.
 
+The paper configuration fixes the seed to `42`. At pipeline startup,
+`seed_everything()` seeds Python, NumPy, PyTorch, and every available CUDA device. It
+also requests deterministic PyTorch algorithms, disables cuDNN benchmarking, and
+configures deterministic cuDNN behavior. Use `--seed N` to override the configured
+seed. Dataset code that creates a PyTorch `DataLoader` should include the supplied
+worker seeding options:
+
+```python
+from pooleval.reproducibility import data_loader_seed_options
+from torch.utils.data import DataLoader
+
+loader = DataLoader(
+    dataset,
+    num_workers=4,
+    **data_loader_seed_options(seed=42),
+)
+```
+
+PoolEvaluator's closed-form EM remains NumPy computation and does not use bfloat16.
+Exact bit-for-bit equality is not promised across different hardware, dependency
+versions, external APIs, or operations for which PyTorch reports no deterministic
+implementation.
+
 The Text2SQL execution path is:
 
 1. Group labeled calibration examples by database, embed their questions, and
@@ -299,6 +325,8 @@ Useful controls:
 TARGET_ITEMS=10          # target examples per dataset
 SOURCE_CANDIDATES=500    # calibration records considered before top-K retrieval
 MAX_MODELS=5             # prefix of the 35-member Text2SQL pool
+INFERENCE_DTYPE=bfloat16 # use float32 automatically when bfloat16 is unsupported
+SEED=42                  # Python, NumPy, PyTorch, CUDA, and loader seed
 DOWNLOAD_MODELS=0        # reuse existing checkpoints
 PREPARE_EXTERNAL_RUNTIMES=0 # clone official custom graph-model code
 RUN_JUDGES=0             # stop after Stage 2
@@ -329,6 +357,7 @@ pooleval/models.py       checkpoint download and lazy loading
 pooleval/adapters.py     Text2SQL/image/node prediction adapters
 pooleval/judges.py       three-model judge ensemble
 pooleval/pipeline.py     end-to-end orchestration
+pooleval/reproducibility.py runtime seeds and deterministic PyTorch configuration
 scripts/run_all.sh       smoke and full reproduction entry point
 tests/                   deterministic unit and integration tests
 ```

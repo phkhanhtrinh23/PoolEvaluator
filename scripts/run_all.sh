@@ -52,6 +52,8 @@ for dataset in spider bird; do
     --target-items "${TARGET_ITEMS:-150}" \
     --source-candidates "${SOURCE_CANDIDATES:-2000}" \
     --max-models "${MAX_MODELS:-35}" \
+    --dtype "${INFERENCE_DTYPE:-bfloat16}" \
+    --seed "${SEED:-42}" \
     --checkpoint-dir "${CHECKPOINT_DIR:-checkpoints}" \
     --artifact-root "$artifact_root" \
     --fusion-sql-root "$data_root" \
@@ -67,7 +69,9 @@ if [[ "${LOAD_ALL_POOLS:-0}" == "1" ]]; then
     python -m pooleval.models load \
       --task "$task" \
       --cache-dir "${CHECKPOINT_DIR:-checkpoints}" \
-      --device-map auto
+      --device-map auto \
+      --dtype "${INFERENCE_DTYPE:-bfloat16}" \
+      --seed "${SEED:-42}"
   done
 fi
 

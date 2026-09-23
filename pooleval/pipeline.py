@@ -20,6 +20,7 @@ from .execution import execute, response_classes, signature
 from .judges import JudgeItem, paper_judges
 from .metrics import evaluate
 from .models import load_model
+from .reproducibility import seed_everything
 from .retrieval import select_subsets
 
 
@@ -34,6 +35,7 @@ def _generate(
     split: str,
     artifact_root: Path,
     cache_dir: str | None,
+    dtype: str,
 ) -> dict[str, dict[str, str]]:
     predictions: dict[str, dict[str, str]] = {}
     prompts = [text2sql_prompt(item.question, schema_prompt(item.schema), item.evidence) for item in items]
@@ -46,7 +48,7 @@ def _generate(
         missing = [i for i, item in enumerate(items) if item.id not in cached]
         print(f"[generate:{split}] {index}/{len(specs)} {spec.name}, missing={len(missing)}")
         if missing:
-            loaded = load_model(spec, cache_dir=cache_dir)
+            loaded = load_model(spec, cache_dir=cache_dir, dtype=dtype)
             generated = predict_text2sql(loaded, [prompts[i] for i in missing])
             cached.update({items[i].id: sql for i, sql in zip(missing, generated)})
             path.write_text(json.dumps(cached, indent=2), encoding="utf-8")
@@ -98,6 +100,13 @@ def _execute_pool(
 
 def run_text2sql(args: argparse.Namespace) -> dict[str, Any]:
     config = paper_config(args.config)
+    runtime_cfg = config.get("runtime", {})
+    requested_seed = getattr(args, "seed", None)
+    requested_dtype = getattr(args, "dtype", None)
+    seed = int(requested_seed if requested_seed is not None else config["seed"])
+    deterministic = bool(runtime_cfg.get("deterministic", True))
+    dtype = requested_dtype or runtime_cfg.get("inference_dtype", "bfloat16")
+    seed_everything(seed, deterministic=deterministic)
     data_cfg = config["data"]
     layout = {
         "fusion_root": args.fusion_sql_root or data_cfg["fusion_sql_root"],
@@ -113,8 +122,12 @@ def run_text2sql(args: argparse.Namespace) -> dict[str, Any]:
 
     specs = load_model_pool("text2sql")[: args.max_models]
     artifacts = Path(args.artifact_root or data_cfg["output_root"]).resolve()
-    predictions_target = _generate(target, specs, "target", artifacts, args.checkpoint_dir)
-    predictions_source = _generate(source, specs, "source", artifacts, args.checkpoint_dir)
+    predictions_target = _generate(
+        target, specs, "target", artifacts, args.checkpoint_dir, dtype
+    )
+    predictions_source = _generate(
+        source, specs, "source", artifacts, args.checkpoint_dir, dtype
+    )
     db_root = artifacts / "db_instances"
     target_suites = _suites(target, db_root)
     source_suites = _suites(source, db_root)
@@ -133,7 +146,7 @@ def run_text2sql(args: argparse.Namespace) -> dict[str, Any]:
         config["method"]["max_em_iterations"],
         config["method"]["tolerance"],
         config["method"]["smoothing"],
-        seed=config["seed"],
+        seed=seed,
     )
     estimate = evaluator.fit(target_matrix, initial)
 
@@ -164,6 +177,9 @@ def run_text2sql(args: argparse.Namespace) -> dict[str, Any]:
     truth = target_correct.mean(axis=0)
     report = {
         "dataset": args.dataset,
+        "seed": seed,
+        "deterministic": deterministic,
+        "requested_inference_dtype": dtype,
         "models": [spec.name for spec in specs],
         "target_items": len(target),
         "calibration_items": len(source),
@@ -185,6 +201,7 @@ def run_text2sql(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run_smoke() -> dict[str, Any]:
+    seed_everything(42)
     source = np.asarray(
         [[0, 0, 1, 2], [0, 1, 0, 2], [1, 1, 1, 0], [2, 0, 2, 2], [0, 0, 0, 1]],
         dtype=object,
@@ -217,6 +234,8 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--source-items", type=int)
     run.add_argument("--max-models", type=int, default=35)
     run.add_argument("--checkpoint-dir", default="checkpoints")
+    run.add_argument("--dtype", choices=["auto", "bfloat16", "float32"])
+    run.add_argument("--seed", type=int)
     run.add_argument("--artifact-root")
     run.add_argument("--judge", action="store_true")
     run.add_argument("--require-all-judges", action="store_true")

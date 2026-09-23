@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -99,6 +100,60 @@ def _source(spec: ModelSpec, cache_dir: str | Path | None) -> str:
     return str(path if path.exists() else spec.id)
 
 
+def _local_device(device_map: str | None) -> Any:
+    import torch
+
+    if device_map == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device_map and device_map.split(":", 1)[0] in {"cpu", "cuda", "mps", "xpu"}:
+        return torch.device(device_map)
+    return torch.device("cpu")
+
+
+def resolve_inference_dtype(dtype: str, device_map: str | None = "auto") -> Any:
+    """Resolve a requested inference dtype, safely falling back from bfloat16."""
+    import torch
+
+    normalized = str(dtype).casefold().replace("torch.", "")
+    if normalized == "auto":
+        return "auto"
+    if normalized in {"float32", "fp32", "float"}:
+        return torch.float32
+    if normalized not in {"bfloat16", "bf16"}:
+        raise ValueError("dtype must be one of: auto, bfloat16, float32")
+
+    device = _local_device(device_map)
+    supported = False
+    if device.type == "cuda" and torch.cuda.is_available():
+        indices = (
+            range(torch.cuda.device_count())
+            if device_map == "auto"
+            else [device.index if device.index is not None else torch.cuda.current_device()]
+        )
+
+        def device_supports_bfloat16(index: int) -> bool:
+            with torch.cuda.device(index):
+                return bool(torch.cuda.is_bf16_supported())
+
+        supported = all(device_supports_bfloat16(index) for index in indices)
+    if supported:
+        return torch.bfloat16
+    warnings.warn(
+        f"bfloat16 inference is not safely supported on {device.type}, using float32",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return torch.float32
+
+
+def _resolve_local_inference_dtype(dtype: str, device_map: str | None) -> Any:
+    """Resolve dtype for timm and PyG, which do not accept Transformers' ``auto``."""
+    import torch
+
+    resolved = resolve_inference_dtype(dtype, device_map)
+    return torch.float32 if resolved == "auto" else resolved
+
+
 def _load_transformers(spec: ModelSpec, source: str, device_map: str | None, dtype: str) -> LoadedModel:
     try:
         from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForSeq2SeqLM, AutoTokenizer
@@ -107,7 +162,8 @@ def _load_transformers(spec: ModelSpec, source: str, device_map: str | None, dty
     config = AutoConfig.from_pretrained(source, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=True)
     cls = AutoModelForSeq2SeqLM if getattr(config, "is_encoder_decoder", False) else AutoModelForCausalLM
-    kwargs: dict[str, Any] = {"trust_remote_code": True, "torch_dtype": dtype}
+    resolved_dtype = resolve_inference_dtype(dtype, device_map)
+    kwargs: dict[str, Any] = {"trust_remote_code": True, "torch_dtype": resolved_dtype}
     if device_map:
         kwargs["device_map"] = device_map
     model = cls.from_pretrained(source, **kwargs).eval()
@@ -124,7 +180,8 @@ def _load_image(spec: ModelSpec, source: str, device_map: str | None, dtype: str
         )
     except ImportError as exc:
         raise RuntimeError("install model dependencies: pip install -e '.[models]'") from exc
-    kwargs: dict[str, Any] = {"torch_dtype": dtype, "trust_remote_code": True}
+    resolved_dtype = resolve_inference_dtype(dtype, device_map)
+    kwargs: dict[str, Any] = {"torch_dtype": resolved_dtype, "trust_remote_code": True}
     if device_map:
         kwargs["device_map"] = device_map
     if spec.backend == "zero_shot_image":
@@ -136,19 +193,30 @@ def _load_image(spec: ModelSpec, source: str, device_map: str | None, dtype: str
     return LoadedModel(spec, model, processor, Path(source) if Path(source).exists() else None)
 
 
-def _load_timm(spec: ModelSpec, source: str) -> LoadedModel:
+def _load_timm(spec: ModelSpec, source: str, device_map: str | None, dtype: str) -> LoadedModel:
     try:
         import timm
     except ImportError as exc:
         raise RuntimeError("install model dependencies: pip install -e '.[models]'") from exc
     model_name = f"local-dir:{source}" if Path(source).exists() else f"hf-hub:{source}"
     model = timm.create_model(model_name, pretrained=True).eval()
+    model = model.to(
+        device=_local_device(device_map),
+        dtype=_resolve_local_inference_dtype(dtype, device_map),
+    )
     data_config = timm.data.resolve_model_data_config(model)
     processor = timm.data.create_transform(**data_config, is_training=False)
     return LoadedModel(spec, model, processor, Path(source) if Path(source).exists() else None)
 
 
-def _load_pyg(spec: ModelSpec, in_channels: int, hidden_channels: int, out_channels: int) -> LoadedModel:
+def _load_pyg(
+    spec: ModelSpec,
+    in_channels: int,
+    hidden_channels: int,
+    out_channels: int,
+    device_map: str | None,
+    dtype: str,
+) -> LoadedModel:
     try:
         import torch
         from torch_geometric import nn as gnn
@@ -182,6 +250,10 @@ def _load_pyg(spec: ModelSpec, in_channels: int, hidden_channels: int, out_chann
             "SuperGATConv": lambda: conv(in_channels, out_channels),
         }
         model = special.get(spec.id, lambda: conv(in_channels, out_channels))()
+    model = model.eval().to(
+        device=_local_device(device_map),
+        dtype=_resolve_local_inference_dtype(dtype, device_map),
+    )
     return LoadedModel(spec, model)
 
 
@@ -189,7 +261,7 @@ def load_model(
     spec: ModelSpec,
     cache_dir: str | Path | None = None,
     device_map: str | None = "auto",
-    dtype: str = "auto",
+    dtype: str = "bfloat16",
     in_channels: int = 128,
     hidden_channels: int = 128,
     out_channels: int = 10,
@@ -212,9 +284,11 @@ def load_model(
         )
         return LoadedModel(spec, external, local_path=Path(source) if Path(source).exists() else None)
     if spec.backend == "pyg":
-        return _load_pyg(spec, in_channels, hidden_channels, out_channels)
+        return _load_pyg(
+            spec, in_channels, hidden_channels, out_channels, device_map, dtype
+        )
     if spec.backend == "timm":
-        return _load_timm(spec, source)
+        return _load_timm(spec, source, device_map, dtype)
     if spec.backend in {"image_classification", "zero_shot_image"}:
         return _load_image(spec, source, device_map, dtype)
     if spec.backend == "snapshot":
@@ -266,6 +340,8 @@ def main(argv: list[str] | None = None) -> None:
     p_load.add_argument("--cache-dir", default="checkpoints")
     p_load.add_argument("--max-models", type=int)
     p_load.add_argument("--device-map", default="auto")
+    p_load.add_argument("--dtype", choices=["auto", "bfloat16", "float32"], default="bfloat16")
+    p_load.add_argument("--seed", type=int, default=42)
     p_runtime = sub.add_parser("runtimes", help="prepare official external graph runtimes")
     p_runtime.add_argument("--task", choices=["node"], default="node")
     p_runtime.add_argument("--cache-dir", default="checkpoints")
@@ -275,10 +351,15 @@ def main(argv: list[str] | None = None) -> None:
         download_pool(args.task, args.cache_dir, args.dry_run)
         return
     if args.command == "load":
+        from .reproducibility import seed_everything
+
+        seed_everything(args.seed)
         specs = load_model_pool(args.task)[: args.max_models]
         for index, spec in enumerate(specs, start=1):
             print(f"[load] {index}/{len(specs)} {spec.name}")
-            loaded = load_model(spec, args.cache_dir, device_map=args.device_map)
+            loaded = load_model(
+                spec, args.cache_dir, device_map=args.device_map, dtype=args.dtype
+            )
             print(f"  ready backend={spec.backend} type={type(loaded.model).__name__}")
             del loaded
         return

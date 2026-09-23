@@ -1,5 +1,9 @@
 seed: 42
 
+runtime:
+  inference_dtype: bfloat16
+  deterministic: true
+
 data:
   fusion_sql_root: datasets/text2sql
   bird_metadata_root: datasets/text2sql/bird
