@@ -6,10 +6,6 @@ from their agreement on an unlabeled target set, initializes the estimate from
 retrieved labeled subsets, and optionally asks a small ensemble of external judges to
 resolve ambiguous items.
 
-The prior exploratory repository is preserved on the Git branch
-`trinh_experiment`. `main` intentionally contains only the implementation needed to
-run the method in the paper.
-
 ![PoolEvaluator pipeline](assets/pipeline.png)
 
 ![Motivation: estimation and ranking error versus latency](assets/motivation.png)
@@ -276,10 +272,4 @@ pooleval/judges.py       three-model judge ensemble
 pooleval/pipeline.py     end-to-end orchestration
 scripts/run_all.sh       smoke and full reproduction entry point
 tests/                   deterministic unit and integration tests
-```
-
-To inspect the exploratory history without changing `main`:
-
-```bash
-git switch trinh_experiment
 ```
