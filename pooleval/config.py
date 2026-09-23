@@ -33,16 +33,17 @@ class ModelSpec:
     runtime_repo: str | None = None
 
 
-def load_manifest(task: str, manifest_dir: str | Path | None = None) -> list[ModelSpec]:
-    directory = Path(manifest_dir) if manifest_dir else ROOT / "manifests"
+def load_model_pool(task: str, pool_dir: str | Path | None = None) -> list[ModelSpec]:
+    """Read one appendix model-pool definition."""
+    directory = Path(pool_dir) if pool_dir else ROOT / "model_pools"
     raw = load_yaml(directory / f"{task}.yaml")
     if raw.get("task") != task:
-        raise ValueError(f"manifest task mismatch: requested {task!r}")
+        raise ValueError(f"model-pool task mismatch: requested {task!r}")
     models = raw.get("models")
     if not isinstance(models, list) or not models:
-        raise ValueError(f"manifest {task!r} contains no models")
+        raise ValueError(f"model pool {task!r} contains no models")
     specs = [ModelSpec(task=task, **row) for row in models]
     names = [spec.name for spec in specs]
     if len(names) != len(set(names)):
-        raise ValueError(f"duplicate model name in {task!r} manifest")
+        raise ValueError(f"duplicate model name in {task!r} pool")
     return specs

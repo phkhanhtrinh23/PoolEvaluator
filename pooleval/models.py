@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from .config import ModelSpec, ROOT, load_manifest
+from .config import ModelSpec, load_model_pool
 
 
 @dataclass
@@ -35,7 +35,7 @@ class ExternalCheckpoint:
 
 
 def _repo_specs(task: str) -> list[ModelSpec]:
-    return [s for s in load_manifest(task) if s.backend != "pyg"]
+    return [s for s in load_model_pool(task) if s.backend != "pyg"]
 
 
 def _shared_path(cache_dir: str | Path, model_id: str) -> Path:
@@ -76,7 +76,7 @@ def prepare_runtimes(
     task: str = "node", cache_dir: str | Path = "checkpoints", dry_run: bool = False
 ) -> list[Path]:
     """Clone official source trees required by non-Transformers graph checkpoints."""
-    specs = load_manifest(task)
+    specs = load_model_pool(task)
     repos = list(dict.fromkeys(spec.runtime_repo for spec in specs if spec.runtime_repo))
     root = Path(cache_dir).expanduser().resolve() / "runtimes"
     paths: list[Path] = []
@@ -194,7 +194,7 @@ def load_model(
     hidden_channels: int = 128,
     out_channels: int = 10,
 ) -> LoadedModel:
-    """Load one manifest member using its declared backend."""
+    """Load one model-pool member using its declared backend."""
     source = _source(spec, cache_dir)
     if spec.backend == "external":
         base = spec.base
@@ -237,12 +237,12 @@ def load_model(
 
 
 class ModelPool:
-    """A paper manifest that yields loaded members lazily."""
+    """An appendix model pool that yields loaded members lazily."""
 
     def __init__(self, task: str, cache_dir: str | Path | None = None):
         self.task = task
         self.cache_dir = cache_dir
-        self.specs = load_manifest(task)
+        self.specs = load_model_pool(task)
 
     def __len__(self) -> int:
         return len(self.specs)
@@ -275,7 +275,7 @@ def main(argv: list[str] | None = None) -> None:
         download_pool(args.task, args.cache_dir, args.dry_run)
         return
     if args.command == "load":
-        specs = load_manifest(args.task)[: args.max_models]
+        specs = load_model_pool(args.task)[: args.max_models]
         for index, spec in enumerate(specs, start=1):
             print(f"[load] {index}/{len(specs)} {spec.name}")
             loaded = load_model(spec, args.cache_dir, device_map=args.device_map)
@@ -287,7 +287,7 @@ def main(argv: list[str] | None = None) -> None:
         return
     tasks = ("text2sql", "image", "node") if args.task == "all" else (args.task,)
     for task in tasks:
-        specs = load_manifest(task)
+        specs = load_model_pool(task)
         print(f"{task}: {len(specs)}")
         for spec in specs:
             print(f"  {spec.name:42s} {spec.backend:20s} {spec.id}")

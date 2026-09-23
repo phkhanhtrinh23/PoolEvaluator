@@ -12,7 +12,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from .adapters import predict_text2sql, text2sql_prompt
-from .config import load_manifest, paper_config
+from .config import load_model_pool, paper_config
 from .data import Text2SQLItem, load_text2sql, schema_prompt
 from .databases import build_instances
 from .estimator import PoolEvaluator, calibration_parameters
@@ -111,7 +111,7 @@ def run_text2sql(args: argparse.Namespace) -> dict[str, Any]:
         source = source[: args.source_items]
     print(f"[retrieval] selected {len(source)} items from {min(15, len(retrieval))} database subsets")
 
-    specs = load_manifest("text2sql")[: args.max_models]
+    specs = load_model_pool("text2sql")[: args.max_models]
     artifacts = Path(args.artifact_root or data_cfg["output_root"]).resolve()
     predictions_target = _generate(target, specs, "target", artifacts, args.checkpoint_dir)
     predictions_source = _generate(source, specs, "source", artifacts, args.checkpoint_dir)

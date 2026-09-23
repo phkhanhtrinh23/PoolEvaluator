@@ -129,8 +129,8 @@ def build_instances(
             integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
         temporary.replace(target)
         records.append(InstanceRecord(str(source), str(target), variant, changed, integrity))
-    manifest = destination / "manifest.json"
-    manifest.write_text(json.dumps([asdict(record) for record in records], indent=2), encoding="utf-8")
+    metadata = destination / "instances.json"
+    metadata.write_text(json.dumps([asdict(record) for record in records], indent=2), encoding="utf-8")
     return records
 
 

@@ -17,7 +17,7 @@ run the method in the paper.
 ## What is included
 
 - The exact appendix pool sizes: **35 Text2SQL**, **20 image-classification**, and
-  **20 node-classification** members in [`manifests/`](manifests/).
+  **20 node-classification** members in [`model_pools/`](model_pools/).
 - Lazy download/loading for Transformers, timm, PyTorch Geometric, zero-shot vision,
   and graph adapter/projector repositories in
   [`pooleval/models.py`](pooleval/models.py).
@@ -45,7 +45,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 
-# Core estimator, manifests, database tooling, and tests
+# Core estimator, model-pool definitions, database tooling, and tests
 python -m pip install -e '.[dev]'
 
 # Add model runtimes and API clients on an experiment machine
@@ -92,7 +92,7 @@ than 4 KiB.
 
 ## 3. Inspect, download, and load the paper model pools
 
-First inspect the complete manifests without downloading weights:
+First inspect the complete model pools without downloading weights:
 
 ```bash
 python -m pooleval.models list --task all
@@ -152,8 +152,8 @@ python -m pooleval.databases --dataset spider --limit-databases 1 --output-dir a
 python -m pooleval.databases --dataset bird   --limit-databases 1 --output-dir artifacts/db_smoke
 ```
 
-Each source database gets `instance_1.sqlite` through `instance_5.sqlite` plus a JSON
-manifest. The variants make deterministic value replacements, deletions, and
+Each source database gets `instance_1.sqlite` through `instance_5.sqlite` plus an
+`instances.json` metadata file. The variants make deterministic value replacements, deletions, and
 insertions, then run `PRAGMA integrity_check`. Source databases are opened read-only
 by the evaluator and are never modified.
 
@@ -218,7 +218,7 @@ it is never included in a target model prompt or judge prompt.
 
 ## 7. Run everything from one script
 
-The default is a safe smoke run: unit tests, all model-manifest checks, a download
+The default is a safe smoke run: unit tests, all model-pool checks, a download
 plan, estimator inference, and one real Spider plus one real BIRD database-instance
 test.
 
@@ -243,7 +243,7 @@ Useful controls:
 ```bash
 TARGET_ITEMS=10          # target examples per dataset
 SOURCE_CANDIDATES=500    # calibration records considered before top-K retrieval
-MAX_MODELS=5             # prefix of the 35-member Text2SQL manifest
+MAX_MODELS=5             # prefix of the 35-member Text2SQL pool
 DOWNLOAD_MODELS=0        # reuse existing checkpoints
 PREPARE_EXTERNAL_RUNTIMES=0 # clone official custom graph-model code
 RUN_JUDGES=0             # stop after Stage 2
@@ -265,7 +265,7 @@ python -m pytest -q
 ```text
 assets/                  paper figures used above
 configs/paper.yaml       K, V, EM, execution, paths, and judge defaults
-manifests/               all appendix model pools
+model_pools/             all appendix model pools
 pooleval/estimator.py    leave-one-out agreement and closed-form EM
 pooleval/retrieval.py    top-K meta-subset retrieval
 pooleval/databases.py    five-instance SQLite generator

@@ -148,7 +148,7 @@ class JudgeEnsemble:
             votes.append(vote)
             self.last_votes[judge.name] = vote
         # Deterministic majority.  On a tie, prefer NONE to avoid hard-validating an
-        # answer without agreement; otherwise preserve manifest order.
+        # answer without agreement; otherwise preserve configured judge order.
         counts = {vote: votes.count(vote) for vote in set(votes)}
         best = max(counts.values())
         winners = [vote for vote, count in counts.items() if count == best]
