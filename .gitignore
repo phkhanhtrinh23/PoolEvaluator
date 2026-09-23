@@ -12,3 +12,7 @@ results/*.txt
 results/*.log
 .DS_Store
 zoo_artifacts/
+artifacts/
+checkpoints/
+db_instances/
+.cache/

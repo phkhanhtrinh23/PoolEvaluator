@@ -1,0 +1,32 @@
+seed: 42
+
+data:
+  fusion_sql_root: /mnt/win_d/data_FusionSQL
+  bird_metadata_root: /mnt/win_d/data
+  bird_database_root: /mnt/win_d/data/sft_data_collections/bird
+  output_root: artifacts
+
+method:
+  subset_budget: 15
+  judge_rounds: 10
+  judge_batch_size: 1
+  max_em_iterations: 100
+  tolerance: 1.0e-6
+  smoothing: 1.0
+
+execution:
+  modified_instances: 5
+  timeout_seconds: 5.0
+  keep_fraction: 0.80
+  mutation_fraction: 0.10
+
+judges:
+  aggregation: majority
+  allow_partial: true
+  members:
+    - provider: openai
+      model: gpt-5.4
+    - provider: openai
+      model: gpt-5.5
+    - provider: anthropic
+      model: claude-opus-5-5

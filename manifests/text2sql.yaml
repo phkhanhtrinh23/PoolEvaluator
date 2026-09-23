@@ -1,0 +1,37 @@
+task: text2sql
+models:
+  - {name: Arctic-Text2SQL-R1-7B, id: Snowflake/Arctic-Text2SQL-R1-7B, backend: transformers}
+  - {name: Code-Llama-2-13B-Instruct-Text2SQL, id: bugdaryan/Code-Llama-2-13B-instruct-text2sql, backend: transformers}
+  - {name: CodeLlama-70B-Instruct, id: codellama/CodeLlama-70b-Instruct-hf, backend: transformers}
+  - {name: CodeS-1B, id: seeklhy/codes-1b, backend: transformers}
+  - {name: CodeS-3B, id: seeklhy/codes-3b, backend: transformers}
+  - {name: CodeS-7B, id: seeklhy/codes-7b, backend: transformers}
+  - {name: CodeS-15B, id: seeklhy/codes-15b, backend: transformers}
+  - {name: CscSQL-Merge-Qwen2.5-Coder-7B, id: cycloneboy/CscSQL-Merge-Qwen2.5-Coder-7B-Instruct, backend: transformers}
+  - {name: Distil-Qwen3-4B-Text2SQL, id: distil-labs/distil-qwen3-4b-text2sql, backend: transformers}
+  - {name: Flan-T5-Text2SQL-Schema, id: juierror/flan-t5-text2sql-with-schema, backend: transformers}
+  - {name: Flan-T5-Text2SQL-Schema-v2, id: juierror/flan-t5-text2sql-with-schema-v2, backend: transformers}
+  - {name: Gemma-2-2B, id: google/gemma-2-2b, backend: transformers}
+  - {name: Graphix-3B, id: patrickNLP/Graphix-3B, backend: transformers}
+  - {name: Hrida-T2SQL-3B, id: HridaAI/Hrida-T2SQL-3B-V0.2, backend: transformers}
+  - {name: Llama-3-SQLCoder-8B, id: defog/llama-3-sqlcoder-8b, backend: transformers}
+  - {name: Llama-3.1-70B-Instruct, id: meta-llama/Llama-3.1-70B-Instruct, backend: transformers}
+  - {name: Meta-Llama-3-70B, id: meta-llama/Meta-Llama-3-70B, backend: transformers}
+  - {name: Ministral-3-14B, id: mistralai/Ministral-3-14B-Instruct-2512, backend: transformers}
+  - {name: Mixtral-8x7B-Instruct, id: mistralai/Mixtral-8x7B-Instruct-v0.1, backend: transformers}
+  - {name: OmniSQL-7B, id: seeklhy/OmniSQL-7B, backend: transformers}
+  - {name: OmniSQL-14B, id: seeklhy/OmniSQL-14B, backend: transformers}
+  - {name: Pip-SQL-1.3B, id: PipableAI/pip-sql-1.3b, backend: transformers}
+  - {name: Qwen2.5-32B, id: Qwen/Qwen2.5-32B, backend: transformers}
+  - {name: Qwen2.5-72B-Instruct, id: Qwen/Qwen2.5-72B-Instruct, backend: transformers}
+  - {name: Qwen3-4B-Text-to-SQL, id: Ellbendls/Qwen-3-4b-Text_to_SQL, backend: transformers}
+  - {name: SQLCoder-7B-2, id: defog/sqlcoder-7b-2, backend: transformers}
+  - {name: SQLCoder-15B, id: defog/sqlcoder, backend: transformers}
+  - {name: SQLCoder-70B-Alpha, id: defog/sqlcoder-70b-alpha, backend: transformers}
+  - {name: SQLCoder2, id: defog/sqlcoder2, backend: transformers}
+  - {name: T5-LM-Large-Text2SQL-Spider, id: gaussalgo/T5-LM-Large-text2sql-spider, backend: transformers}
+  - {name: T5-Small-Text-to-SQL, id: cssupport/t5-small-awesome-text-to-sql, backend: transformers}
+  - {name: XiYanSQL-QwenCoder-3B, id: XGenerationLab/XiYanSQL-QwenCoder-3B-2502, backend: transformers}
+  - {name: XiYanSQL-QwenCoder-7B, id: XGenerationLab/XiYanSQL-QwenCoder-7B-2502, backend: transformers}
+  - {name: XiYanSQL-QwenCoder-14B, id: XGenerationLab/XiYanSQL-QwenCoder-14B-2502, backend: transformers}
+  - {name: XiYanSQL-QwenCoder-32B, id: XGenerationLab/XiYanSQL-QwenCoder-32B-2504, backend: transformers}

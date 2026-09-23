@@ -1,0 +1,22 @@
+task: image
+models:
+  - {name: CLIP-ViT-B-32, id: openai/clip-vit-base-patch32, backend: zero_shot_image}
+  - {name: CLIP-ViT-L-14, id: openai/clip-vit-large-patch14, backend: zero_shot_image}
+  - {name: ConvNeXt-Tiny, id: timm/convnext_tiny.fb_in1k, backend: timm}
+  - {name: ConvNeXtV2-Base, id: facebook/convnextv2-base-22k-384, backend: image_classification}
+  - {name: DeiT-Small, id: timm/deit_small_patch16_224.fb_in1k, backend: timm}
+  - {name: DenseNet-121, id: timm/densenet121.ra_in1k, backend: timm}
+  - {name: EfficientNet-B2, id: timm/efficientnet_b2.ra_in1k, backend: timm}
+  - {name: MobileNetV2, id: timm/mobilenetv2_100.ra_in1k, backend: timm}
+  - {name: MobileNetV3-Small, id: timm/mobilenetv3_small_100.lamb_in1k, backend: timm}
+  - {name: RegNetY-8GF, id: timm/regnety_080.ra3_in1k, backend: timm}
+  - {name: ResNet-18-Microsoft, id: microsoft/resnet-18, backend: image_classification}
+  - {name: ResNet-18-timm, id: timm/resnet18.a1_in1k, backend: timm}
+  - {name: ResNet-50-Microsoft, id: microsoft/resnet-50, backend: image_classification}
+  - {name: ResNeXt-50-32x4d, id: timm/resnext50_32x4d.a1_in1k, backend: timm}
+  - {name: SigLIP2-Base-16, id: google/siglip2-base-patch16-224, backend: zero_shot_image}
+  - {name: SigLIP-SO400M-14, id: google/siglip-so400m-patch14-384, backend: zero_shot_image}
+  - {name: VGG-16, id: timm/vgg16.tv_in1k, backend: timm}
+  - {name: ViT-Base, id: google/vit-base-patch16-224, backend: image_classification}
+  - {name: ViT-Tiny, id: timm/vit_tiny_patch16_224.augreg_in21k_ft_in1k, backend: timm}
+  - {name: WideResNet-50-2, id: timm/wide_resnet50_2.racm_in1k, backend: timm}

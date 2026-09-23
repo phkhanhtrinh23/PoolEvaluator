@@ -1,0 +1,22 @@
+task: node
+models:
+  - {name: APPNP, id: APPNP, backend: pyg}
+  - {name: ARMA, id: ARMAConv, backend: pyg}
+  - {name: ChebNet, id: ChebConv, backend: pyg}
+  - {name: GAT, id: GATConv, backend: pyg}
+  - {name: GATv2, id: GATv2Conv, backend: pyg}
+  - {name: GCN, id: GCNConv, backend: pyg}
+  - {name: GCNII, id: GCN2Conv, backend: pyg}
+  - {name: GIN, id: GINConv, backend: pyg}
+  - {name: GraphGPT-7B, id: Jiabin99/GraphGPT-7B-mix-all, backend: external, auxiliary: Jiabin99/Arxiv-PubMed-GraphCLIP-GT, runtime_repo: "https://github.com/HKUDS/GraphGPT.git"}
+  - {name: GraphPFN-1.3, id: eremeev-d/graphpfn-1.3, backend: external, runtime_repo: "https://github.com/yandex-research/graphpfn.git"}
+  - {name: GraphSAGE, id: SAGEConv, backend: pyg}
+  - {name: JKNet, id: JumpingKnowledge, backend: pyg}
+  - {name: LLaGA-HO-Classification, id: Runjin/llaga-vicuna-7b-simteg-HO-classification_expert-linear-projector, backend: external, base: lmsys/vicuna-7b-v1.5-16k, runtime_repo: "https://github.com/VITA-Group/LLaGA.git"}
+  - {name: LLaGA-ND-Classification, id: Runjin/llaga-vicuna-7b-simteg-ND-classification_expert-linear-projector, backend: external, base: lmsys/vicuna-7b-v1.5-16k, runtime_repo: "https://github.com/VITA-Group/LLaGA.git"}
+  - {name: MixHop, id: MixHopConv, backend: pyg}
+  - {name: MLP, id: MLP, backend: pyg}
+  - {name: SGC, id: SGConv, backend: pyg}
+  - {name: SuperGAT, id: SuperGATConv, backend: pyg}
+  - {name: TAGCN, id: TAGConv, backend: pyg}
+  - {name: UniMP, id: TransformerConv, backend: pyg}

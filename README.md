@@ -1,622 +1,285 @@
-# PoolEval-SQL — Label-Free Joint Evaluation and Ranking of Text-to-SQL Model Pools
+# PoolEvaluator
 
-Reference implementation for the paper **"Label-Free Joint Evaluation and Ranking of
-Text-to-SQL Model Pools"** (the framework is named **PoolEval-SQL**; this repo ships
-it as the `pooleval` package with the `PoolEval` estimator class).
+This is the paper-aligned artifact for **“Which Model Should Be Chosen? Evaluating a
+Pool of Models on Unseen and Unlabeled Data.”** It jointly estimates and ranks models
+from their agreement on an unlabeled target set, initializes the estimate from
+retrieved labeled subsets, and optionally asks a small ensemble of external judges to
+resolve ambiguous items.
 
-A team that runs Text-to-SQL rarely owns one model — it keeps a *pool* of versions,
-fine-tunes, and vendor APIs, and must decide, on each new **unlabeled** private
-database, *which model to deploy and how accurate each is*. Existing label-free
-evaluators score **one model at a time** and lean on a shift calibration that decays
-under the very shift that makes evaluation necessary. **PoolEval-SQL** evaluates the
-*whole pool jointly*: it treats the unlabeled questions as items and the models as
-graders of a latent correct answer, so their **mutual agreement** becomes evidence
-no single-model estimator can see. Executing the queries on the live database
-grounds that agreement and supplies an independent verifier; each model's existing
-calibration anchors the absolute level; and a provenance-grouped error model plus a
-graded equivalence kernel keep near-clones and brittle exact matching from
-corrupting the estimate.
+The prior exploratory repository is preserved on the Git branch
+`trinh_experiment`. `main` intentionally contains only the implementation needed to
+run the method in the paper.
 
-> **Note on data.** The paper evaluates real model *zoos* on Spider / BIRD /
-> Spider 2.0; those checkpoints and databases are not redistributable. This repo
-> ships a faithful **simulator** of the evaluation problem (latent correctness,
-> provenance-correlated errors, seen priors, an execution verifier, a graded
-> equivalence kernel) so the estimator, the baselines, and every experiment run
-> end-to-end on a commodity CPU in seconds. All reported numbers below come from
-> that simulator; plugging in real pool outputs only requires replacing
-> `pooleval/data/simulator.py` with a loader that returns the same `PoolRun`.
+![PoolEvaluator pipeline](assets/pipeline.png)
 
----
+![Motivation: estimation and ranking error versus latency](assets/motivation.png)
 
-## Method library
+## What is included
 
-PoolEval-SQL realizes one coupling — the pool scored against a shared latent answer —
-anchored by a seen prior and an execution verifier, refined by a graded kernel and
-precision fusion. The components and the baselines we compare against:
+- The exact appendix pool sizes: **35 Text2SQL**, **20 image-classification**, and
+  **20 node-classification** members in [`manifests/`](manifests/).
+- Lazy download/loading for Transformers, timm, PyTorch Geometric, zero-shot vision,
+  and graph adapter/projector repositories in
+  [`pooleval/models.py`](pooleval/models.py).
+- Stage 1 top-K subset retrieval, Stage 2 closed-form EM over
+  \((\alpha_j,\beta_j,\gamma_j)\), and Stage 3 warm-started judge validation.
+- EX-Extended evaluation on the original SQLite database plus **five modified
+  instances**, with deterministic caching and integrity checks.
+- GPT-5.4, GPT-5.5, and Claude Opus 5.5 judge adapters and majority aggregation.
+- One shell entry point for tests, dry-run model preparation, database generation,
+  and full Spider/BIRD evaluation.
 
-| Method | Role | Paper § | Code |
-| --- | --- | --- | --- |
-| **PoolEval-SQL (ours)** | **anchored, correlation-aware latent-correctness EM over the pool** | **§4** | **[`pooleval/`](pooleval/)** |
-| ├ Graded execution-equivalence kernel (LA0/LA1/LA2) | ground agreement in graded equivalence (R4) | §4.1 | [`pooleval/kernel.py`](pooleval/kernel.py) |
-| ├ Correlation-aware latent correctness (IRT + provenance loadings) | couple the pool, discount near-clones (R1,R3) | §4.2 | [`pooleval/latent.py`](pooleval/latent.py) |
-| ├ Seen-prior + execution-verifier anchors | break the gauge (R2) | §4.3 | [`pooleval/latent.py`](pooleval/latent.py) |
-| ├ Shift-adaptive precision fusion | weight prior vs agreement by reliability | §4.4 | [`pooleval/latent.py`](pooleval/latent.py) |
-| └ Estimator (ranking, intervals, M_eff, collusion flag) | outputs | §4.5 | [`pooleval/inference.py`](pooleval/inference.py) |
-| B1 Independent (Garg et al., 2022) | single-model label-free eval, run once per model | §6 | [`baselines/independent/`](baselines/independent/) |
-| B2 Majority / self-consistency (Wang et al., 2023) | accuracy = agreement with execution-majority | §6 | [`baselines/majority/`](baselines/majority/) |
-| B3 Dawid–Skene (1979) | latent-truth crowd model, no prior, independent errors | §6 | [`baselines/dawid_skene/`](baselines/dawid_skene/) |
-| B4 Agreement-on-the-line (Baek et al., 2022) | tuned agreement→accuracy linear trend | §6 | [`baselines/agreement_line/`](baselines/agreement_line/) |
-| B5 LLM-as-judge (preference judge, no execution) | simulator proxy for judge-style scoring | §6 | [`baselines/llm_judge/`](baselines/llm_judge/) |
+The two manuscript figures are committed as README assets. PDFs and exploratory
+reports are deliberately absent from `main`; the paper itself remains the source of
+truth for tables and derivations.
 
----
+## 1. Create the environment
 
-## How the method works (the EM in [`pooleval/latent.py`](pooleval/latent.py))
-
-**The one-sentence picture.** On a new database we never see the gold SQL, so *the
-correct answer to each question is a hidden variable*. PoolEval-SQL treats the pool as
-a crowd of graders and runs **expectation–maximization (EM)** to jointly (a) infer each
-question's hidden correct answer and (b) score each model against those inferred
-answers — bootstrapping one from the other until they stop changing. It is an
-**inference procedure run fresh on a single unlabeled target**: there is no gradient
-descent and no weights learned across datasets.
-
-### What is estimated vs. what is held fixed
-
-EM solves for four things and treats everything else as fixed data or a fixed anchor.
-
-| Quantity (code name) | Meaning | Status in EM |
-| --- | --- | --- |
-| `latent_hat[i]` (`z_i`) | the hidden correct answer (result class) of question *i* | **latent variable** — re-inferred every E-step |
-| `a` (`a_m`) | per-model accuracy / IRT "ability" — **the deliverable** | **estimated** — updated every M-step |
-| `b` (`b_i`) | per-question difficulty | **estimated** — updated every M-step |
-| `u` (`u_g`) | per-provenance-group shared-error loading | **estimated** — updated every M-step |
-| `obs[m,i]` | observed result-equivalence classes from the kernel | **fixed data** |
-| `run.prior` (`π_m`), `run.prior_sigma` (`σ_m`) | each model's seen single-model calibration | **fixed anchor** |
-| `run.verifier_guess` (`v_i`) | the execution verifier's guess of the true answer | **fixed anchor** |
-| `run.group` (`G(m)`) | provenance tag (which base model it derives from) | **fixed input** |
-
-Nothing on the "fixed" rows is trained here. In particular the seen priors `π_m` were
-fit **earlier**, by an external single-model calibrator on a *labeled source* domain;
-they enter EM only as the anchor that pins the accuracy level.
-
-### What "maximization" maximizes
-
-EM maximizes the log-posterior of the whole problem (paper Eq. *objective*, §III) over
-the parameters `a, b, u` and the latent answers `z`:
-
-```
-maximize  Σ_{m,i} log p(result_{m,i} | z_i, a_m, b_i)   agreement likelihood: every model scored
-                                                         against the SAME latent answer, with a
-                                                         provenance-group correlated-error discount
-        + Σ_i     log p(v_i | z_i)                       verifier: the database is an independent grader
-        + Σ_m     log π_m(a_m)                            seen prior: anchors each model's absolute level
-```
-
-The first term is the whole point of evaluating the pool *jointly*: a single-model
-evaluator never sees that two models agreed, but here every pairwise agreement is
-evidence about the shared `z_i`, hence about both models' accuracies. The verifier and
-prior terms pin the level (see *why the anchors matter* below).
-
-### The two alternating steps
-
-Each iteration of the `for it in range(n_iters)` loop does:
-
-- **E-step — "given the current scores, what was each question's true answer?"**
-  Holding `a, b, u` fixed, for every item it builds a **reliability-weighted,
-  group-discounted, verifier-nudged vote** over the candidate answers and softmaxes it
-  into a posterior `p(z_i = class)`; `latent_hat[i]` is the arg-max.
-  - `w = clip(a)` — each model votes with weight equal to its current estimated accuracy
-    (a model believed to be 0.8-accurate counts far more than a 0.3-accurate one).
-  - `disc = 1/(1 + u_g·(n−1))` — if `n` models from the *same provenance group* vote the
-    same class, their weights are shrunk so a colluding clique of near-clones counts as
-    ≈ **one** independent vote, not `n`.
-  - the verifier adds `verifier_strength` to whichever class it points at.
-
-- **M-step — "given those answers, how accurate is each model?"**
-  Holding the latent answers fixed, each model's raw accuracy is
-  `a_agree[m] = mean_i (obs[m,i] == latent_hat[i])` — the fraction of questions where it
-  matched the inferred truth — then pulled toward the seen prior by **inverse-variance
-  (precision) fusion**: an uncertain prior yields to the consensus, a near-clone pool
-  yields to the prior. Difficulties `b_i` are read from how many models got item *i*
-  right; loadings `u_g` from how much a group agrees *on wrong answers* beyond the
-  cross-group baseline (`_estimate_loadings`).
-
-The two steps reinforce each other — better accuracies sharpen the weighted vote, which
-sharpens the latent answers, which sharpen the accuracies — and the loop runs until
-`a, b, u` stop changing (`delta < tol`), typically a handful of iterations. The
-accuracy update deliberately matches against the **hard** (arg-max) latent estimate:
-soft averaging would shrink every model toward 0.5 and lose the absolute level.
-
-### Why the anchors and the group discount are load-bearing
-
-Agreement *alone* is **gauge-ambiguous**: a pool that is all-correct and a pool that
-all-agrees-on-the-same-wrong-answer produce identical agreement, so the absolute
-accuracy level is unidentifiable. The **seen prior** and the **execution verifier** (an
-independent channel — a query that fails to run or returns an implausible result is
-wrong no matter who produced it) break that tie. Separately, models sharing a base
-model fail *together*, so a naive majority over-credits a colluding clique; the
-**group loadings `u_g`** down-weight within-group agreement and feed the reported
-**effective independent-model count** `M_eff = M / (1 + c̄·(M−1))`. The ablations (RQ2)
-switch each of these off (`use_prior`, `use_verifier`, `use_correlation`) to show the
-specific failure it prevents.
-
-### Nothing is trained across datasets
-
-`run_em` is called once per target `PoolRun` and estimates `a, b, u` from that target's
-unlabeled outputs alone. The **only** cross-dataset learning is the optional warm-start
-(RQ7, [`run_rq7_warmstart.py`](experiments/run_rq7_warmstart.py)), which meta-learns a
-better *initial* `a` so EM converges in fewer iterations — the answer at convergence is
-unchanged.
-
----
-
-## Install
+Python 3.10 or newer is required.
 
 ```bash
-cd majority_voting_model_eval_code
-python -m pip install -r requirements.txt   # numpy, scipy, scikit-learn, pyyaml
-# optional: pip install -e .
+git clone <repository-url>
+cd pool_text2sql_eval_code
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+
+# Core estimator, manifests, database tooling, and tests
+python -m pip install -e '.[dev]'
+
+# Add model runtimes and API clients on an experiment machine
+python -m pip install -e '.[models,judges]'
 ```
 
-## Quickstart
+`torch-geometric` may require a CUDA-specific wheel on older systems. Follow the
+[PyG installation matrix](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html)
+if the normal extra does not match the installed PyTorch/CUDA build.
 
-```python
-from pooleval import Config, PoolEval, simulate, metrics
+## 2. Configure the datasets
 
-cfg  = Config(seed=0)                  # default diverse M=12 pool, 7 provenance groups
-run  = simulate(cfg)                   # a pool run (gold withheld; used only to score)
-out  = PoolEval(cfg).evaluate(run)     # joint latent-correctness inference
+The defaults match the local machine used for this artifact:
 
-print(metrics.all_metrics(out["acc"], run.true_acc))   # MAE, Flip, Kendall, Top-1/3
-print("ranking :", out["ranking"])     # best-first model order
-print("M_eff   :", round(out["Meff"], 1), "of", cfg.M) # effective independent models
-print("collusion flag:", out["collusion"])
+```text
+/mnt/win_d/data_FusionSQL/
+├── spider/
+│   ├── sft_spider_dev_text2sql.json
+│   ├── sft_spider_train_text2sql.json
+│   ├── database/<db_id>/<db_id>.sqlite
+│   └── test_database/<db_id>/<db_id>.sqlite
+
+/mnt/win_d/data/
+├── sft_bird_dev_text2sql.json
+├── sft_bird_train_text2sql.json
+└── sft_data_collections/bird/
+    ├── dev/dev_databases/<db_id>/<db_id>.sqlite
+    └── train/train_databases/<db_id>/<db_id>.sqlite
 ```
 
-## Reproduce the paper experiments
+The path mentioned in the original notes was `/mnt/win_d/data_FuionsQL`; the
+directory present on this machine is `/mnt/win_d/data_FusionSQL` (correct spelling).
+Override any location with environment variables:
 
 ```bash
-bash scripts/reproduce_main.sh          # or: powershell scripts/reproduce_main.ps1
-# or individually:
-python experiments/run_rq1_ranking.py     --seeds 10   # Table: ranking a pool
-python experiments/run_rq2_ablation.py    --seeds 8    # break the gauge (ablation)
-python experiments/run_rq3_correlation.py --seeds 5    # correlated errors & M_eff
-python experiments/run_rq4_kernel.py      --seeds 8    # equivalence-kernel P/R
-python experiments/run_rq5_scaling.py     --seeds 5    # scaling with pool size
-python experiments/run_rq6_reliability_efficiency.py --seeds 5 # coverage, ECE, cost, budget
-python experiments/run_rq7_warmstart.py    --seeds 5    # warm-start optimization
-python experiments/run_rq8_drift.py        --seeds 5    # workload drift
-python experiments/run_prior_bound_validation.py --trials 500  # coverage bound + ESS theory
-python experiments/report_mae_comparison.py --results-root /path/to/results # cross-domain MAE table
-python experiments/run_all.py             --seeds 8    # everything -> results/*.json
+export POOLEVAL_DATA_ROOT=/path/to/data_FusionSQL
+export BIRD_METADATA_ROOT=/path/to/bird/json/files
+export BIRD_DATABASE_ROOT=/path/to/bird/database/root
+export POOLEVAL_ARTIFACT_ROOT=/fast/disk/pooleval_artifacts
 ```
 
----
+The loaders skip Git-LFS pointer stubs and require materialized SQLite files larger
+than 4 KiB.
 
-## Extension: Active PoolEval-SQL (label-efficient, judge-in-the-loop)
+## 3. Inspect, download, and load the paper model pools
 
-Pure PoolEval-SQL is label-free but can only ever pick a latent answer from the classes
-the pool **produced**. When every model is wrong — especially when a near-clone clique
-agrees on the *same* wrong SQL and a plausible result fools the verifier — the correct
-answer is **absent from the candidate set**, and consensus confidently credits a wrong
-class (the **candidate-coverage** limitation). **Active PoolEval-SQL** keeps the
-framework unchanged and spends a strong label-free judge (**gpt-5-mini**: reads the
-question, executes the SQL, aligns result-to-question — no gold) *only* on the most
-ambiguous items, chosen by **greedy submodular maximization** (≥ (1−1/e)·OPT,
-Nemhauser–Wolsey–Fisher 1978), then pins each verdict as a hard EM constraint and
-re-solves with incremental EM.
+First inspect the complete manifests without downloading weights:
 
 ```bash
-python experiments/run_active.py --seeds 20     # candidate-gap DGP + budget sweep + abstention
-python -m zoo.run_active --budget 12            # REAL Spider zoo + gpt-5-mini judge
-python -m zoo.run_active --budget 12 --mock     # same pipeline, oracle judge, no API cost
+python -m pooleval.models list --task all
+python -m pooleval.models download --task all --dry-run
 ```
 
-On a controlled candidate-gap DGP where pure PoolEval-SQL inflates a colluding clique
-(true acc **0.357 → 0.582**) and picks it #1, the provenance-aware submodular strategy
-recovers the correct deployment decision **85 % of the time at a 10 % label budget** (vs
-30 % random, and **15 % for uncertainty sampling** — the dangerous items look *confident*,
-so entropy-driven acquisition is the *worst*). Full write-up and tables:
-**[`experiments/ACTIVE_POOLEVAL.md`](experiments/ACTIVE_POOLEVAL.md)**.
-Code: [`pooleval/active.py`](pooleval/active.py), [`zoo/judge.py`](zoo/judge.py).
-
-**Real model zoos across 5 datasets.** The gpt-5-mini judge runs on real pools for
-**Spider, SQLFlow, BIRD, BIRD-MiniDev, and Spider 2.0-lite** (10 models, 12-question
-budget). With that tiny budget, Active PoolEval **lowers ranking error (MAE) on every
-dataset**, the judge's *"none"* rate **tracks difficulty** (0 on Spider → 4 on
-BIRD-MiniDev), and the largest ranking win lands on the **hardest** benchmark —
-**Spider 2.0-lite** (pool EX just 5 %), where it improves Kendall **0.79 → 0.85** and
-fixes the Top-1 deployment choice. Table, definitions, analysis, and reproduction
-commands: **[`experiments/MULTI_DATASET_RESULTS.md`](experiments/MULTI_DATASET_RESULTS.md)**.
-
-Deeper studies — **prior ablation** (the seen prior is load-bearing on real data;
-removing it roughly doubles MAE on hard sets), **judge reliability** (gpt-5-mini is a
-reliable *"none"*-detector but a weak *picker* — which explains the small BIRD dip),
-**bootstrap CIs** (the MAE gain is significant on 4/5 datasets), an **oracle budget
-sweep** (more budget monotonically lowers MAE), and a **synthesis-judge ablation** (an
-honest negative — letting the judge *write* SQL doesn't help on hard data): see
-**[`experiments/ANALYSIS.md`](experiments/ANALYSIS.md)**.
-
-**Where does the prior come from?** The seen prior is the anchor that fixes the gauge,
-but in the runs above it is measured on a *labeled split of the target benchmark* — the
-one thing a deployed operator lacks. [`synsql/`](synsql/README.md) tests replacing it
-with a prior estimated on **SynSQL-2.5M** subsets *retrieved* to match the unlabeled
-target (2.54M records, 16,583 live DBs, ~1K-item subsets, 8,000 executed generations).
-Result, in short: **retrieval alignment is uninformative** (corr(distance, prior error)
-≈ 0 on all five targets), but the label-free corpus prior recovers the pool's *relative*
-ability almost exactly — after removing a single shared offset its MAE is **2.98–3.89
-vs the target-labeled prior's 2.80**. The entire gap is one scalar: the gauge. Buying
-just that back costs **~10–40 target labels** instead of a 120-item labeled split,
-which composes directly with the judge-in-the-loop budget above. A zero-cost
-source x target matrix over all five benchmarks shows the level gap is a property of
-being **out-of-domain**, not of SynSQL being synthetic — Spider→BIRD is off by 40.5 and
-Spider→Spider 2.0-local by 72.3, both worse than SynSQL — while centered MAE stays in
-1.8–4.4 for *every* source. Full write-up:
-**[`experiments/SYNSQL_PRIOR.md`](experiments/SYNSQL_PRIOR.md)**.
-
----
-
-## Results (this repository's simulator)
-
-**RQ1 — Ranking a diverse `M=12` pool** (`--seeds 10`; lower MAE/Flip better, higher
-Kendall/Top-k better). PoolEval-SQL is best on accuracy MAE and on the
-ranking-difference metrics (flip rate, Kendall-τ) it is designed to improve; the
-preference-based judge (B5) trails the execution-grounded methods, as in the paper:
-
-| Method | MAE ↓ | Flip ↓ | Kendall-τ ↑ | Top-1 ↑ | Top-3 ↑ |
-| --- | --- | --- | --- | --- | --- |
-| B1 Independent | 7.20 | 0.25 | 0.49 | 0.20 | 0.60 |
-| B2 Majority / self-cons. | 3.73 | 0.09 | 0.81 | 0.50 | 0.83 |
-| B3 Dawid–Skene | 3.69 | 0.10 | 0.79 | 0.50 | 0.83 |
-| B4 Agreement-on-the-line | 3.66 | 0.11 | 0.78 | 0.50 | 0.80 |
-| B5 LLM-as-judge | 6.50 | 0.25 | 0.48 | 0.50 | 0.57 |
-| **PoolEval-SQL (ours)** | **3.24** | **0.07** | **0.86** | 0.50 | 0.83 |
-
-**RQ2 — Breaking the gauge (ablation, `--seeds 8`).** Removing any component raises
-accuracy MAE; the kernel and the anchors are the load-bearing ones:
-
-| Variant | MAE ↓ | Flip ↓ |
-| --- | --- | --- |
-| **PoolEval-SQL (full)** | **3.19** | **0.06** |
-| − seen prior (R2) | 3.54 | 0.04 |
-| − execution verifier (R2) | 4.48 | 0.10 |
-| − correlation model (R3) | 3.82 | 0.08 |
-| − graded kernel → exact match (R4) | 8.37 | 0.10 |
-| − all (≈ B3) | 7.62 | 0.12 |
-
-**RQ3 — Correlated errors & `M_eff` (`--seeds 5`).** As within-pool correlation
-grows, PoolEval-SQL stays accurate (and below B3), and the reported effective-independent
-count falls from ~`M` toward the number of independent provenance groups:
-
-| collusion | B3 MAE | PoolEval-SQL MAE | M_eff (of 12) |
-| --- | --- | --- | --- |
-| 0.00 | 3.60 | 3.73 | 11.8 |
-| 0.40 | 3.95 | 3.42 | 11.3 |
-| 0.80 | 4.08 | 3.00 | 9.8 |
-| 0.95 | 3.86 | 2.45 | 9.4 |
-
-**RQ4 — Equivalence kernel precision/recall vs gold (`--seeds 8`).** LA0 exact match
-has high precision but poor recall; LA1 canonicalization recovers recall; LA2
-multi-instance raises precision:
-
-| Level | Precision | Recall |
-| --- | --- | --- |
-| LA0 exact | 0.999 | 0.549 |
-| LA1 canonical | 0.995 | 0.870 |
-| LA2 multi-instance | 1.000 | 0.940 |
-
-**RQ5 — Scaling with pool size (`--seeds 5`).** PoolEval-SQL's ranking stays sharp as the
-pool grows; the independent baseline scores each model in isolation and does not
-improve:
-
-| M | B1 Flip | PoolEval-SQL Flip | B1 Kendall | PoolEval-SQL Kendall |
-| --- | --- | --- | --- | --- |
-| 5 | 0.18 | 0.08 | 0.64 | 0.84 |
-| 12 | 0.26 | 0.06 | 0.47 | 0.87 |
-| 20 | 0.28 | 0.07 | 0.44 | 0.86 |
-
-*(Numbers are deterministic per seed; minor differences across `--seeds` reflect the
-coarse, binary Top-1 metric on near-tied pools.)*
-
----
-
-## How the code maps to the paper
-
-| Paper | Code |
-| --- | --- |
-| Objective (Eq. agreement+verifier+anchor) | [`pooleval/latent.py`](pooleval/latent.py) `run_em` |
-| §4.1 Graded execution-equivalence kernel (LA0–LA2) | [`pooleval/kernel.py`](pooleval/kernel.py) |
-| §4.2 IRT coupling + provenance-group loadings, M_eff | [`pooleval/latent.py`](pooleval/latent.py) |
-| §4.3 Seen prior + execution verifier | `Config.use_prior/use_verifier`, simulator anchors |
-| §4.4 Shift-adaptive precision (inverse-variance) fusion | `latent.py` M-step (`fusion="precision"`) |
-| §4.5 Inference outputs (ranking, intervals, M_eff, flag) | [`pooleval/inference.py`](pooleval/inference.py) |
-| Prop. 4.1 (joint estimation ↓ ranking-difference variance) | RQ1/RQ5 flip-rate & Kendall reductions |
-| Conformal intervals calibrated on a held-out slice (§4.5) | [`experiments/run_rq6_reliability_efficiency.py`](experiments/run_rq6_reliability_efficiency.py) `calibrate_scales` |
-| §6 Baselines B1–B5 | [`baselines/`](baselines/) |
-| §6 RQ1–RQ8 | [`experiments/`](experiments/) |
-
-## Repository layout
-
-```
-pooleval/        core: config, simulator, kernel, latent EM, fusion, inference, metrics, active (Active PoolEval-SQL)
-baselines/       B1 Independent, B2 Majority, B3 Dawid–Skene, B4 Agreement-on-the-line, B5 LLM-as-judge (preference proxy)
-experiments/     run_rq1..run_rq8, run_all; run_active (candidate-coverage + judge budget); ACTIVE_POOLEVAL.md
-zoo/             real multi-dataset pipeline; datasets.py (Spider/BIRD/SQLFlow/Spider2 loaders), judge.py (gpt-5-mini RealJudge), run_multi.py, run_active.py
-synsql/          SynSQL-2.5M as a retrievable prior corpus: ingest, ~1K-subset partitionings, MMD retrieval, subset probing, gauge label-budget, cross-benchmark prior matrix
-configs/         default.yaml (mirrors pooleval/config.py)
-scripts/         reproduce_main.sh / .ps1
-tests/           test_smoke (pipeline; PoolEval-SQL lowest flip), test_active (constraint EM, judge, submodular, recovery)
-```
-
-## Tests
+Download one pool or all three. Gated repositories require a Hugging Face token and
+license acceptance.
 
 ```bash
-python tests/test_smoke.py && python tests/test_active.py     # or: pytest -q
+export HF_TOKEN=hf_...
+python -m pooleval.models download --task text2sql --cache-dir checkpoints
+python -m pooleval.models download --task image    --cache-dir checkpoints
+python -m pooleval.models download --task node     --cache-dir checkpoints
+# equivalent: --task all
+
+# Clone the official GraphGPT, GraphPFN, and LLaGA runtime source trees.
+python -m pooleval.models runtimes --task node --cache-dir checkpoints
 ```
 
-## Experimental closed-form formulation
-
-The full beginner-friendly derivation of the collision-aware E-step, auxiliary
-objective $Q$, and numerical beta M-step is in
-[`docs/collision_em_beta_derivation.md`](docs/collision_em_beta_derivation.md).
-
-The alternative pseudo-label agreement EM in `new_formulation/` is implemented
-alongside the original estimator in [`pooleval/new_formulation.py`](pooleval/new_formulation.py).
-It uses old PoolEval's kernel/prior/provenance/verifier score to fix a pseudo-label,
-then applies the document's closed-form EM updates to the binary agreement matrix.
-The paired RQ1--RQ8 comparison and full interpretation are in
-[`experiments/NEW_FORMULATION_RESULTS.md`](experiments/NEW_FORMULATION_RESULTS.md).
-The evaluation on saved real Spider, BIRD, SQLFlow, and BIRD-MiniDev model-zoo
-artifacts is reported in
-[`experiments/NEW_FORMULATION_REAL_RESULTS.md`](experiments/NEW_FORMULATION_REAL_RESULTS.md).
-The collision-aware case-3 extension and its leave-one-dataset-out real evaluation
-are reported in
-[`experiments/COLLISION_FORMULATION_REAL_RESULTS.md`](experiments/COLLISION_FORMULATION_REAL_RESULTS.md).
-The replay of saved real `gpt-5-mini` pseudo-label corrections after case-3 EM is
-reported in
-[`experiments/COLLISION_ACTIVE_REAL_RESULTS.md`](experiments/COLLISION_ACTIVE_REAL_RESULTS.md).
-The complete rerun is reported in
-[`experiments/COLLISION_RERUN_2026_08_14.md`](experiments/COLLISION_RERUN_2026_08_14.md).
+Verify runtime loading sequentially (a loaded member is released before the next):
 
 ```bash
-python experiments/run_new_formulation_comparison.py --seeds 8
-python -m zoo.new_formulation_real --bootstrap 500
-python -m zoo.collision_formulation_real --bootstrap 500
-python -m zoo.collision_active_real --bootstrap 400
+python -m pooleval.models load --task text2sql --cache-dir checkpoints
+python -m pooleval.models load --task image    --cache-dir checkpoints
+python -m pooleval.models load --task node     --cache-dir checkpoints
 ```
 
-## Beyond Text2SQL: image and node classification
+The large 70B/72B checkpoints need a multi-GPU machine. `device_map=auto` and
+automatic dtype are used. `ModelPool.iter_load()` is the programmatic entry point;
+[`pooleval/adapters.py`](pooleval/adapters.py) turns loaded members into Text2SQL,
+image, or node predictions. The two LLaGA entries consist of a Vicuna base plus a
+released projector. GraphGPT additionally downloads its released graph encoder.
+GraphGPT, GraphPFN, and LLaGA retain their official runtimes because their custom graph
+types are not supported by Transformers `AutoModel`. They enter the common adapter via
+`graph.external_runner(checkpoint, graph, class_names)`. GraphPFN's public repository
+contains graph-adapter weights, but its required LimiX backbone has a separate license;
+obtain that backbone under its upstream terms before running GraphPFN. Local checkpoint
+paths are retained in `LoadedModel.local_path`.
 
-`pooleval/domains/` ports the estimator to image classification (MNIST -> USPS /
-SVHN, MetaEvaluator's architectures) and node classification (ACMv9 / Citationv1 /
-DBLPv7, GNNEvaluator's GNNs) on real trained pools. The EM core is unchanged --
-only the observation kernel, prior, and verifier are domain-specific. Results,
-the three anchor defects the ports exposed, and the `verifier_mode="learned"`
-mitigation are in [`docs/domain_ports.md`](docs/domain_ports.md).
+## 4. Create EX-Extended database instances
+
+Build five modified instances for **every unique database** referenced by both target
+sets:
 
 ```bash
-python experiments/run_domain_graph.py
-python experiments/run_domain_vision.py
-python experiments/run_domain_diagnostics.py --kind graph
+python -m pooleval.databases \
+  --dataset all \
+  --split target \
+  --output-dir artifacts/db_instances
 ```
 
-[`docs/multiclass_ds.md`](docs/multiclass_ds.md) works through what the right
-estimator is once the answer space is a closed set of K classes: why the
-collision rate `gamma` is not needed there, the closed-form multiclass EM, a
-measurement showing Dawid--Skene's uniform-error assumption is violated by
-1.9x-6.4x on real pools, and the confusion-matrix fix that turns MNIST -> SVHN
-from a total failure (rho -0.886) into a solved case (rho +0.829).
-
-It also reports which estimator wins in which regime -- small target set, many
-classes, imbalanced classes, heterogeneous pool -- with the crossover set by
-observations per free parameter (PoolEval's parameter count is independent of K;
-full DS's grows as K^2). One result is exact rather than empirical: in a pool
-with one model per family, PoolEval's provenance discount is provably inert
-(`max|on-off| = 0`), so it degenerates to a weaker one-coin DS.
-
-Section 8 explains, in plain language first, why the MAE and ranking columns
-disagree throughout. The picture: a class sits a test and you have lost the
-answer key, so you rebuild the key from what the students agreed on and grade
-them against your guess. If the class was wrong together, the key inherits the
-mistake and everyone looks better than they are -- which is why every method here
-over-estimates every model, and why MAE ends up measuring only how much too high
-each method is.
-
-PoolEval caps how loudly a strong model can out-vote a weak one (about 20x) and
-averages every score toward source-domain accuracy, so its estimates bunch toward
-the middle. Bunching drags inflated estimates down, which wins MAE -- but it also
-erases the differences you need in order to rank. Dawid--Skene does the opposite:
-uncapped voting power (over 1000x, negative for below-chance models) and an EM
-loop that amplifies small differences, so its estimates spread too far apart --
-worse MAE, better ranking.
-
-The asymmetry that settles it: an offset is fixable (label a small sample and
-subtract it), a wrong ordering is not.
+For a cheap validation first:
 
 ```bash
-python experiments/run_ds_assumption.py
-python experiments/run_regime_scenarios.py
-python experiments/run_gamma_ablation.py
+python -m pooleval.databases --dataset spider --limit-databases 1 --output-dir artifacts/db_smoke
+python -m pooleval.databases --dataset bird   --limit-databases 1 --output-dir artifacts/db_smoke
 ```
 
-### Four more tasks: link prediction, captioning, knowledge-graph completion
+Each source database gets `instance_1.sqlite` through `instance_5.sqlite` plus a JSON
+manifest. The variants make deterministic value replacements, deletions, and
+insertions, then run `PRAGMA integrity_check`. Source databases are opened read-only
+by the evaluator and are never modified.
 
-[`docs/four_more_tasks.md`](docs/four_more_tasks.md) reports four further
-experiments, written for a reader who has seen none of the above. They were
-chosen to span one axis -- how many possible answers a task has -- because that
-number turns out to decide almost everything.
+## 5. Configure the judge ensemble
 
-**`PoolEval` vs `PoolEval (learned verif.)`.** Both use the same outside helper,
-the *verifier*, and differ only in how much it is trusted. Think of the verifier
-as an outside expert who also sits the test, and is not one of the students.
-`PoolEval` decides in advance that the expert's answer counts as 2 votes, always,
-however good or bad they turn out to be -- students get at most 1 vote each, so
-the expert always outvotes any two of them. `PoolEval (learned verif.)` instead
-treats the expert as one more student and works out their vote weight from the
-data.
-
-On WN18RR the verifier is right 1.8% of the time. Fixed still gives it a weight of
-2.0; learned measures 0.02 and correctly ignores it, which is why learned wins
-there (0.0790 -> 0.0671). But it can be fooled: on FB15k-237 the verifier is right
-17% of the time and learned gives it 0.98, because the algorithm can only ask
-"does the expert agree with our guessed answer key?", never "is the expert right?"
--- and that verifier agrees with the pool's shared mistakes.
-
-In one line: fixed = trust set by hand, learned = trust measured from agreement;
-better when the pool is honest, fooled when the pool is wrong together. The
-default stays "fixed" so the published Text2SQL numbers reproduce unchanged.
-
-All results below are MAE against the withheld true accuracy (lower is better);
-`rho` is Spearman rank correlation (does it order the models correctly). The best
-row and every PoolEval variant are in bold.
-
-### Link prediction (K = 2, mean over 6 cross-graph transfers)
-
-| method | MAE | rho |
-|---|---|---|
-| **DoC** | **0.0523** | +0.002 |
-| B1 Independent | 0.1241 | +0.148 |
-| B4 Agreement-on-line | 0.1241 | +0.579 |
-| DS full (confusion) | 0.1466 | +0.602 |
-| ATC-MC | 0.1814 | -0.269 |
-| ATC-NE | 0.1814 | -0.269 |
-| DS one-coin (exact) | 0.1983 | -0.636 |
-| **PoolEval** | **0.2045** | -0.329 |
-| **PoolEval (learned verif.)** | **0.2073** | -0.583 |
-| B3 Dawid--Skene | 0.2074 | -0.593 |
-| **PoolEval (no anchors)** | **0.2074** | -0.593 |
-| B2 Majority/self-cons. | 0.2084 | -0.582 |
-| NF collision (g=null) | 0.2292 | -0.329 |
-| NF collision (g=source) | 0.2292 | -0.329 |
-| NF collision (g=oracle) | 0.2399 | -0.329 |
-| NF binary EM (g=1) | 0.2780 | -0.330 |
-
-`DS full` is applicable here (2x2 matrix) and gives the best ranking of any
-consensus method, rho +0.602, where every other one ranks *backwards*.
-
-### Image captioning (K unbounded, mean over 4 kernel thresholds)
-
-| method | MAE | rho |
-|---|---|---|
-| **B4 Agreement-on-line** | **0.0108** | +0.998 |
-| B1 Independent | 0.0158 | +0.981 |
-| **PoolEval** | **0.0303** | +0.995 |
-| **PoolEval (learned verif.)** | **0.0347** | +0.998 |
-| DS one-coin (exact) | 0.0362 | +0.987 |
-| **PoolEval (no anchors)** | **0.0381** | +0.996 |
-| B2 Majority/self-cons. | 0.0393 | +1.000 |
-| B3 Dawid--Skene | 0.0394 | +0.998 |
-| NF collision (g=source) | 0.0480 | +0.995 |
-| NF collision (g=oracle) | 0.0493 | +0.995 |
-| NF collision (g=null) | 0.0538 | +0.995 |
-| NF binary EM (g=1) | 0.0656 | +0.995 |
-
-`DS full` is **omitted: not well posed** -- caption clusters are numbered per
-image, so a confusion matrix has nothing stable to estimate. `DoC`/`ATC` need
-per-item softmaxes, which this task does not provide.
-
-### KG completion -- FB15k-237 (K = 14,541)
-
-| method | MAE | rho |
-|---|---|---|
-| **B1 Independent** | **0.0071** | +0.979 |
-| B4 Agreement-on-line | 0.0243 | +0.797 |
-| **PoolEval (learned verif.)** | **0.0500** | +0.951 |
-| **PoolEval** | **0.0792** | +0.930 |
-| B3 Dawid--Skene | 0.0837 | +0.916 |
-| **PoolEval (no anchors)** | **0.0850** | +0.916 |
-| NF collision (g=null) | 0.0912 | +0.930 |
-| NF binary EM (g=1) | 0.1185 | +0.930 |
-| DS one-coin (exact) | 0.1331 | +0.979 |
-| B2 Majority/self-cons. | 0.1364 | +0.918 |
-| NF collision (g=oracle) | 0.3361 | +0.469 |
-| NF collision (g=source) | 0.3699 | +0.469 |
-
-`DS full` is **omitted: infeasible** -- 18.9 GB, 211,426,140 parameters per model.
-
-### KG completion -- WN18RR (K = 40,943)
-
-| method | MAE | rho |
-|---|---|---|
-| **B1 Independent** | **0.0046** | +0.988 |
-| **PoolEval (learned verif.)** | **0.0671** | +0.988 |
-| **PoolEval (no anchors)** | **0.0672** | +0.988 |
-| **PoolEval** | **0.0790** | +0.771 |
-| B4 Agreement-on-line | 0.0811 | +0.403 |
-| NF collision (g=oracle) | 0.1192 | +0.949 |
-| DS one-coin (exact) | 0.1193 | +0.403 |
-| B2 Majority/self-cons. | 0.1210 | +0.403 |
-| NF binary EM (g=1) | 0.1252 | +0.771 |
-| NF collision (g=source) | 0.1301 | +0.771 |
-| NF collision (g=null) | 0.1408 | +0.771 |
-| B3 Dawid--Skene | 0.1806 | +0.395 |
-
-`DS full` is **omitted: infeasible** -- 149.9 GB, 1,676,288,306 parameters per model.
-
-**Can full Dawid--Skene be used? Only on link prediction -- one task in four**,
-and the three failures have two different causes. On knowledge-graph completion
-it is *infeasible*. On captioning it is *meaningless*, which is worse: the code
-still returns a plausible number, but permuting the order the models are listed
-in changes it by 1.8x on identical data (0.0243 vs 0.0435), because cluster ids
-are arbitrary. One-coin DS, which only tests ids for equality, moves by 0.004.
-
-The collision correction of `Trinh_proof.tex` tracks its own theory across the
-range. At K=2 two wrong answers must coincide, so gamma is forced to 1 (measured
-0.999) and the correction is provably vacuous -- gamma=null and gamma=source are
-identical to four decimals. On captioning, the unbounded regime it was written
-for, measuring gamma beats both extremes monotonically (gamma=1 0.0656 -> null
-0.0538 -> measured 0.0480). Measured collision rate over the independent-error
-rate across the four tasks: 1x, 5-6x, 2058x, 3683x.
-
-Full analysis, written for a reader who has seen none of the above, is in
-[`docs/four_more_tasks.md`](docs/four_more_tasks.md).
+Set the provider credentials before enabling Stage 3:
 
 ```bash
-python experiments/run_domain_linkpred.py
-python experiments/run_domain_caption.py
-python experiments/run_domain_kgc.py
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
 ```
 
-## Coverage bound and the two effective sample sizes
+GPT-5.4 and GPT-5.5 use the OpenAI Responses API with strict JSON-schema output.
+Claude Opus 5.5 uses Anthropic’s Messages API. An OpenAI key cannot authenticate to
+Anthropic, so `ANTHROPIC_API_KEY` is required for the requested three-member ensemble.
+By default a missing provider is reported and the available judges continue; pass
+`--require-all-judges` for strict three-member behavior.
 
-Two derivations added to the paper are implemented, tested, and measured here: the
-coverage/Hoeffding accuracy bound (monotone submodularity, the greedy `1 - 1/e`
-factor, the weighted-Hoeffding concentration term) and the Morita-Thall-Mueller
-curvature-matched effective sample size of the Beta anchor.
-`pooleval/theory.py` holds the primitives, `tests/test_theory.py` verifies every
-algebraic claim against the numbers stated in the proofs (14 tests),
-`experiments/run_theory_ablation.py` is the head-to-head, and
-`experiments/run_ess_coverage.py` is the diagnostic suite.
+The manuscript draft names Claude Opus 4.5, whereas this artifact intentionally uses
+**Claude Opus 5.5** as requested. The configured model IDs are `gpt-5.4`, `gpt-5.5`,
+and `claude-opus-5-5`.
 
-**Head-to-head on the real SynSQL probes and the five real Text2SQL targets** (MAE in
-accuracy points, lower is better):
+## 6. Run PoolEvaluator
 
-| | prior MAE | PoolEval MAE | collision-EM MAE |
-|---|---:|---:|---:|
-| Baseline -- no new theory | 24.76 | 22.61 | 25.60 |
-| **Best new-theory configuration** | **22.57** | **18.86** | **21.18** |
-
-The winning combination is **greedy coverage selection + target-matched weights +
-item-scaled `s_beta`**, at full prior strength: -3.75 MAE, winning 4 of 5 targets.
-Greedy and matching only work *together* -- greedy alone is +0.49, matched alone is
--1.27, both are -3.75.
-
-The one ingredient that does not work is the coverage-derived power-prior discount
-`a0 = f_cov/N`: it is near-constant at 0.57 across five targets whose true accuracy
-spans 0.05-0.74, the optimum is always at a boundary, and adopting it costs +1.24 MAE.
-The factor `J` in `s_beta` is also unsupported. Separately, the accuracy bound holds
-on 50/50 model-target pairs but is vacuous: at 2.0-9.4x the real error it promises
-"within 0.75-0.87" about a quantity that already lives in [0, 1]. Coverage sits at
-0.57, where `B <= 0.2` would need 0.92.
-
-Full write-up with all tables: [`docs/ess_coverage.md`](docs/ess_coverage.md).
+Run the CPU-only estimator smoke test:
 
 ```bash
-python -m pytest tests/test_theory.py -q
-python experiments/run_theory_ablation.py
-python experiments/run_ess_coverage.py
+python -m pooleval.pipeline smoke
 ```
 
-## License
+Run a small real Spider experiment using two target items and a subset of models:
 
-MIT — see [LICENSE](LICENSE).
+```bash
+python -m pooleval.pipeline text2sql \
+  --dataset spider \
+  --target-items 2 \
+  --source-candidates 100 \
+  --max-models 3 \
+  --checkpoint-dir checkpoints
+```
+
+Enable judge refinement by adding `--judge`. Predictions, modified databases, and
+reports are cached under `artifacts/`, so interrupted runs are resumable.
+
+The Text2SQL execution path is:
+
+1. Group labeled calibration examples by database, embed their questions, and
+   retrieve the top `K=15` subsets by cosine similarity.
+2. Run each pool member lazily on calibration and target prompts.
+3. Execute every SQL answer on the original database and five variants. Two answers
+   agree only if their canonical results agree on all six instances.
+4. Compute leave-one-model-out consensus and initialize
+   \(\alpha,\beta,\gamma\) from the retrieved labeled subsets.
+5. Run closed-form EM until the infinity-norm change is below `1e-6`.
+6. For `V=10` rounds, select the item with the largest posterior entropy, ask the
+   judge ensemble, hard-fix the revealed correctness vector, and warm-start EM.
+7. Write estimated accuracies, ranking, true held-out EX-Extended metrics, and run
+   metadata to `artifacts/<dataset>_report.json`.
+
+Gold SQL is used only to compute calibration priors and post-hoc evaluation metrics;
+it is never included in a target model prompt or judge prompt.
+
+## 7. Run everything from one script
+
+The default is a safe smoke run: unit tests, all model-manifest checks, a download
+plan, estimator inference, and one real Spider plus one real BIRD database-instance
+test.
+
+```bash
+bash scripts/run_all.sh
+```
+
+The full paper-scale Text2SQL run uses all 35 models, 150 target items per dataset,
+top-15 retrieved subsets, EX-Extended, and ten judge rounds:
+
+```bash
+MODE=full \
+DOWNLOAD_MODELS=1 \
+PREPARE_EXTERNAL_RUNTIMES=1 \
+RUN_JUDGES=1 \
+REQUIRE_ALL_JUDGES=1 \
+bash scripts/run_all.sh
+```
+
+Useful controls:
+
+```bash
+TARGET_ITEMS=10          # target examples per dataset
+SOURCE_CANDIDATES=500    # calibration records considered before top-K retrieval
+MAX_MODELS=5             # prefix of the 35-member Text2SQL manifest
+DOWNLOAD_MODELS=0        # reuse existing checkpoints
+PREPARE_EXTERNAL_RUNTIMES=0 # clone official custom graph-model code
+RUN_JUDGES=0             # stop after Stage 2
+LOAD_ALL_POOLS=1         # additionally load all Text2SQL/image/node members in sequence
+DB_SMOKE_LIMIT=2         # databases per dataset in the initial database smoke test
+```
+
+Running the entire appendix pools requires the corresponding image and graph datasets
+and class mappings. Load those datasets in the standard torchvision/PyG form, then
+call `predict_images()` or `predict_nodes()` from `pooleval.adapters`; both return the
+`[items]` label vector consumed by the same `PoolEvaluator.fit()` API.
+
+## 8. Tests and repository map
+
+```bash
+python -m pytest -q
+```
+
+```text
+assets/                  paper figures used above
+configs/paper.yaml       K, V, EM, execution, paths, and judge defaults
+manifests/               all appendix model pools
+pooleval/estimator.py    leave-one-out agreement and closed-form EM
+pooleval/retrieval.py    top-K meta-subset retrieval
+pooleval/databases.py    five-instance SQLite generator
+pooleval/execution.py    read-only SQL and EX-Extended equivalence
+pooleval/models.py       checkpoint download and lazy loading
+pooleval/adapters.py     Text2SQL/image/node prediction adapters
+pooleval/judges.py       three-model judge ensemble
+pooleval/pipeline.py     end-to-end orchestration
+scripts/run_all.sh       smoke and full reproduction entry point
+tests/                   deterministic unit and integration tests
+```
+
+To inspect the exploratory history without changing `main`:
+
+```bash
+git switch trinh_experiment
+```
