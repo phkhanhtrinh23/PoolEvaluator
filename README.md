@@ -18,7 +18,7 @@ resolve ambiguous items.
   and graph adapter/projector repositories in
   [`pooleval/models.py`](pooleval/models.py).
 - Stage 1 top-K subset retrieval, Stage 2 closed-form EM over
-  \((\alpha_j,\beta_j,\gamma_j)\), and Stage 3 warm-started judge validation.
+  (α<sub>j</sub>, β<sub>j</sub>, γ<sub>j</sub>), and Stage 3 warm-started judge validation.
 - EX-Extended evaluation on the original SQLite database plus **five modified
   instances**, with deterministic caching and integrity checks.
 - GPT-5.4, GPT-5.5, and Claude Opus 5.5 judge adapters and majority aggregation.
@@ -266,8 +266,8 @@ The Text2SQL execution path is:
 2. Run each pool member lazily on calibration and target prompts.
 3. Execute every SQL answer on the original database and five variants. Two answers
    agree only if their canonical results agree on all six instances.
-4. Compute leave-one-model-out consensus and initialize
-   \(\alpha,\beta,\gamma\) from the retrieved labeled subsets.
+4. Compute leave-one-model-out consensus and initialize α, β, and γ from the
+   retrieved labeled subsets.
 5. Run closed-form EM until the infinity-norm change is below `1e-6`.
 6. For `V=10` rounds, select the item with the largest posterior entropy, ask the
    judge ensemble, hard-fix the revealed correctness vector, and warm-start EM.
