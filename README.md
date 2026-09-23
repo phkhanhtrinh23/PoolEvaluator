@@ -22,6 +22,9 @@ resolve ambiguous items.
 - EX-Extended evaluation on the original SQLite database plus **five modified
   instances**, with deterministic caching and integrity checks.
 - GPT-5.4, GPT-5.5, and Claude Opus 5.5 judge adapters and majority aggregation.
+- Eight restored comparison methods in [`baselines/`](baselines/README.md):
+  Independent, Majority, Dawid--Skene, Agreement-on-the-Line, LLM-as-judge, DoC,
+  ATC, and GDE.
 - One shell entry point for tests, dry-run model preparation, database generation,
   and full Spider/BIRD evaluation.
 
@@ -327,6 +330,7 @@ python -m pytest -q
 assets/                  paper figures used above
 configs/paper.yaml       K, V, EM, execution, paths, and judge defaults
 model_pools/             all appendix model pools
+baselines/               implemented comparison estimators
 pooleval/estimator.py    leave-one-out agreement and closed-form EM
 pooleval/retrieval.py    top-K meta-subset retrieval
 pooleval/databases.py    five-instance SQLite generator

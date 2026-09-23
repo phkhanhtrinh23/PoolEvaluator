@@ -32,8 +32,8 @@ pooleval-models = "pooleval.models:main"
 pooleval-db = "pooleval.databases:main"
 pooleval-run = "pooleval.pipeline:main"
 
-[tool.setuptools]
-packages = ["pooleval"]
+[tool.setuptools.packages.find]
+include = ["pooleval*", "baselines*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
