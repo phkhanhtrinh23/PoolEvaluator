@@ -129,8 +129,13 @@ def build_instances(
             integrity = str(connection.execute("PRAGMA integrity_check").fetchone()[0])
         temporary.replace(target)
         records.append(InstanceRecord(str(source), str(target), variant, changed, integrity))
+    # Record portable names, not absolute local paths, so shared artifacts reveal no user directories.
+    portable = [
+        {**asdict(record), "source": f"{source.parent.name}/{source.name}", "instance": Path(record.instance).name}
+        for record in records
+    ]
     metadata = destination / "instances.json"
-    metadata.write_text(json.dumps([asdict(record) for record in records], indent=2), encoding="utf-8")
+    metadata.write_text(json.dumps(portable, indent=2), encoding="utf-8")
     return records
 
 
@@ -159,14 +164,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--split", choices=["target", "train"], default="target")
     parser.add_argument("--output-dir", default="db_instances")
     parser.add_argument("--limit-databases", type=int)
-    parser.add_argument("--fusion-sql-root", default="datasets/text2sql")
+    parser.add_argument("--text2sql-root", default="datasets/text2sql")
     parser.add_argument("--bird-metadata-root", default="datasets/text2sql/bird")
     parser.add_argument("--bird-database-root", default="datasets/text2sql/bird")
     args = parser.parse_args(argv)
     datasets = ("spider", "bird") if args.dataset == "all" else (args.dataset,)
     total = 0
     layout = {
-        "fusion_root": args.fusion_sql_root,
+        "text2sql_root": args.text2sql_root,
         "bird_metadata_root": args.bird_metadata_root,
         "bird_database_root": args.bird_database_root,
     }

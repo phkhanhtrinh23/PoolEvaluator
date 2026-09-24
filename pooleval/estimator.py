@@ -22,6 +22,15 @@ def _as_responses(responses: Sequence[Sequence[Any]]) -> np.ndarray:
     return array
 
 
+def _valid_mask(valid: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray:
+    if valid is None:
+        return np.ones(shape, dtype=bool)
+    mask = np.asarray(valid, dtype=bool)
+    if mask.shape != shape:
+        raise ValueError(f"valid must have shape {shape}")
+    return mask
+
+
 def _weighted_mode(values: np.ndarray, weights: np.ndarray) -> Any:
     """Mode by vote count; summed initial accuracy breaks count ties (paper Eq. 4)."""
     counts: dict[Any, int] = {}
@@ -91,6 +100,41 @@ def calibration_parameters(
     return _clip(alpha), _clip(beta), _clip(gamma)
 
 
+def truncated_normal(
+    size: int, mean: float, std: float, rng: np.random.Generator
+) -> np.ndarray:
+    """Draw ``size`` values from N(mean, std^2) truncated to the open interval (0, 1).
+
+    Rejection sampling is exact: draws outside (0, 1) are discarded and redrawn.
+    """
+    if std <= 0.0:
+        raise ValueError("std must be positive")
+    values = np.empty(int(size), dtype=float)
+    filled = 0
+    while filled < values.size:
+        draws = rng.normal(mean, std, size=2 * (values.size - filled) + 8)
+        kept = draws[(draws > 0.0) & (draws < 1.0)]
+        take = min(kept.size, values.size - filled)
+        values[filled : filled + take] = kept[:take]
+        filled += take
+    return values
+
+
+def random_initialization(
+    n_models: int, mean: float = 0.5, std: float = 0.25, seed: int = 0
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """K=0 prior: every coordinate of theta^(0) drawn independently from TN(mean, std^2; 0, 1)."""
+    rng = np.random.default_rng(seed)
+    alpha, beta, gamma = (_clip(truncated_normal(n_models, mean, std, rng)) for _ in range(3))
+    return alpha, beta, gamma
+
+
+def candidate_answers(row: np.ndarray, valid_row: np.ndarray | None = None) -> list[Any]:
+    """Distinct answers the judge may choose from, dropping outputs that can never be correct."""
+    keep = row if valid_row is None else row[np.asarray(valid_row, dtype=bool)]
+    return list(dict.fromkeys(keep.tolist()))
+
+
 @dataclass
 class Estimate:
     alpha: np.ndarray
@@ -114,11 +158,15 @@ class PoolEvaluator:
         tolerance: float = 1e-6,
         smoothing: float = 1.0,
         seed: int = 0,
+        init_mean: float = 0.5,
+        init_std: float = 0.25,
     ):
         self.max_iterations = int(max_iterations)
         self.tolerance = float(tolerance)
         self.smoothing = float(smoothing)
         self.seed = int(seed)
+        self.init_mean = float(init_mean)
+        self.init_std = float(init_std)
 
     @staticmethod
     def _e_step(c: np.ndarray, alpha: np.ndarray, beta: np.ndarray, gamma: np.ndarray) -> np.ndarray:
@@ -131,20 +179,24 @@ class PoolEvaluator:
         responses: Sequence[Sequence[Any]],
         initial: tuple[Sequence[float], Sequence[float], Sequence[float]] | None = None,
         validated: Mapping[int, Any] | None = None,
+        agreement: np.ndarray | None = None,
     ) -> Estimate:
+        """Run EM; ``agreement`` reuses a C matrix already built with this ``initial`` alpha."""
         r = _as_responses(responses)
         n_items, n_models = r.shape
         if initial is None:
-            rng = np.random.default_rng(self.seed)
-            alpha = rng.uniform(EPS, 1.0 - EPS, size=n_models)
-            beta = rng.uniform(EPS, 1.0 - EPS, size=n_models)
-            gamma = rng.uniform(EPS, 1.0 - EPS, size=n_models)
+            alpha, beta, gamma = random_initialization(
+                n_models, self.init_mean, self.init_std, self.seed
+            )
         else:
             alpha, beta, gamma = map(_clip, initial)
             if any(x.shape != (n_models,) for x in (alpha, beta, gamma)):
                 raise ValueError("each initial parameter must contain one value per model")
         judged = dict(validated or {})
-        agreement, _ = leave_one_out_agreement(r, alpha)
+        if agreement is None:
+            agreement, _ = leave_one_out_agreement(r, alpha)
+        elif agreement.shape != r.shape:
+            raise ValueError("agreement must have the same shape as responses")
         history: list[dict[str, Any]] = []
         converged = False
         q = np.empty_like(agreement)
@@ -193,14 +245,19 @@ class PoolEvaluator:
         responses: Sequence[Sequence[Any]],
         estimate: Estimate,
         validated: Mapping[int, Any] | None = None,
+        valid: np.ndarray | None = None,
     ) -> np.ndarray:
         """Exact judge look-ahead from paper Eq. 15--17.
 
         For each unresolved item, enumerate every distinct pool answer plus NONE,
         normalize their feasible correctness-vector probabilities, warm-start a
         hypothetical EM fit, and measure expected remaining posterior entropy.
+        ``valid[i, j]`` is False for outputs that can never be correct (e.g. SQL that
+        fails to execute); those are not candidate answers.  An item without any
+        valid candidate is not scored, because the judge could only answer NONE.
         """
         r = _as_responses(responses)
+        mask = _valid_mask(valid, r.shape)
         judged = dict(validated or estimate.validated)
         unresolved = [i for i in range(r.shape[0]) if i not in judged]
         scores = np.full(r.shape[0], -np.inf, dtype=float)
@@ -208,8 +265,12 @@ class PoolEvaluator:
             return scores
         current_entropy = float(self.uncertainty(estimate.posterior[unresolved]).sum())
         initial = (estimate.alpha, estimate.beta, estimate.gamma)
+        # Every hypothetical fit starts from the same alpha, so C is shared.
+        agreement, _ = leave_one_out_agreement(r, _clip(estimate.alpha))
         for item in unresolved:
-            answers = list(dict.fromkeys(r[item].tolist()))
+            answers = candidate_answers(r[item], mask[item])
+            if not answers:
+                continue
             none_answer = object()
             outcomes: list[tuple[Any, np.ndarray]] = [
                 (answer, (r[item] == answer).astype(float)) for answer in answers
@@ -226,7 +287,7 @@ class PoolEvaluator:
             for (answer, _), weight in zip(outcomes, probability):
                 hypothetical = dict(judged)
                 hypothetical[item] = answer
-                fitted = self.fit(r, initial, hypothetical)
+                fitted = self.fit(r, initial, hypothetical, agreement=agreement)
                 entropy = float(self.uncertainty(fitted.posterior[remaining]).sum()) if remaining else 0.0
                 expected_entropy += float(weight) * entropy
             scores[item] = current_entropy - expected_entropy
@@ -236,12 +297,19 @@ class PoolEvaluator:
         self,
         responses: Sequence[Sequence[Any]],
         initial: tuple[Sequence[float], Sequence[float], Sequence[float]],
-        judge: Callable[[int, list[Any]], Any],
+        judge: Callable[[int, list[Any], list[float]], Any],
         rounds: int = 10,
         batch_size: int = 1,
+        valid: np.ndarray | None = None,
     ) -> Estimate:
-        """Select ambiguous items, call a judge, and warm-start EM after each round."""
+        """Select ambiguous items, call a judge, and warm-start EM after each round.
+
+        ``judge(item, candidates, support)`` receives the valid candidate answers and,
+        for each, its accuracy-weighted support: the summed current alpha of the
+        models that produced it.  Judge ensembles use it to break vote ties.
+        """
         r = _as_responses(responses)
+        mask = _valid_mask(valid, r.shape)
         validated: dict[int, Any] = {}
         current_initial = initial
         estimate = self.fit(r, current_initial, validated)
@@ -249,12 +317,16 @@ class PoolEvaluator:
         for round_index in range(int(rounds)):
             selected = 0
             for _ in range(max(1, int(batch_size))):
-                gains = self.information_gain(r, estimate, validated)
+                gains = self.information_gain(r, estimate, validated, valid=mask)
                 item = int(np.argmax(gains))
                 if not np.isfinite(gains[item]) or gains[item] <= 0.0:
                     break
-                unique = list(dict.fromkeys(r[item].tolist()))
-                answer = judge(int(item), unique)
+                candidates = candidate_answers(r[item], mask[item])
+                support = [
+                    float(estimate.alpha[(r[item] == answer) & mask[item]].sum())
+                    for answer in candidates
+                ]
+                answer = judge(int(item), candidates, support)
                 validated[int(item)] = answer
                 judge_history.append(
                     {

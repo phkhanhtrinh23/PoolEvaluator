@@ -52,29 +52,82 @@ def predict_text2sql(loaded: LoadedModel, prompts: Sequence[str], max_new_tokens
     return output
 
 
-def predict_images(loaded: LoadedModel, images: Sequence[Any], class_names: Sequence[str]) -> list[int]:
+def image_logits(
+    loaded: LoadedModel,
+    images: Sequence[Any],
+    class_names: Sequence[str] = (),
+    template: str = "a photo of {}",
+    batch_size: int = 64,
+) -> Any:
+    """Return ``[images, classes]`` float logits.
+
+    Closed-set classifiers score their native head; zero-shot vision-language models
+    score ``template.format(name)`` for every name in ``class_names``.
+    """
     import torch
 
-    if loaded.spec.backend == "timm":
-        batch = torch.stack([loaded.processor(image) for image in images])
-        parameter = next(loaded.model.parameters())
+    rows: list[Any] = []
+    for start in range(0, len(images), batch_size):
+        chunk = [image.convert("RGB") for image in images[start : start + batch_size]]
+        if loaded.spec.backend == "timm":
+            batch = torch.stack([loaded.processor(image) for image in chunk])
+            parameter = next(loaded.model.parameters())
+            with torch.inference_mode():
+                logits = loaded.model(batch.to(device=parameter.device, dtype=parameter.dtype))
+        else:
+            kwargs: dict[str, Any] = {"images": chunk, "return_tensors": "pt"}
+            if loaded.spec.backend == "zero_shot_image":
+                kwargs["text"] = [template.format(name) for name in class_names]
+                if "siglip" in loaded.spec.id.casefold():
+                    # SigLIP text towers were trained on fixed 64-token padding.
+                    kwargs.update(padding="max_length", max_length=64)
+                else:
+                    kwargs["padding"] = True
+            batch = _move_batch_to_model(loaded.processor(**kwargs), loaded.model)
+            with torch.inference_mode():
+                result = loaded.model(**batch)
+            logits = getattr(result, "logits_per_image", None)
+            if logits is None:
+                logits = result.logits
+        rows.append(logits.float().cpu())
+    return torch.cat(rows, dim=0)
+
+
+def image_features(loaded: LoadedModel, images: Sequence[Any], batch_size: int = 64) -> Any:
+    """Penultimate (pre-logits) features of a closed-set classifier, as float32 on CPU."""
+    import torch
+
+    rows: list[Any] = []
+    for start in range(0, len(images), batch_size):
+        chunk = [image.convert("RGB") for image in images[start : start + batch_size]]
         with torch.inference_mode():
-            return loaded.model(
-                batch.to(device=parameter.device, dtype=parameter.dtype)
-            ).argmax(-1).cpu().tolist()
-    processor = loaded.processor
-    kwargs = {"images": list(images), "return_tensors": "pt"}
-    if loaded.spec.backend == "zero_shot_image":
-        kwargs["text"] = [f"a photo of {name}" for name in class_names]
-        kwargs["padding"] = True
-    batch = processor(**kwargs)
-    batch = _move_batch_to_model(batch, loaded.model)
-    with torch.inference_mode():
-        result = loaded.model(**batch)
-    logits = getattr(result, "logits_per_image", None)
-    if logits is None:
-        logits = result.logits
-    return logits.argmax(-1).cpu().tolist()
+            if loaded.spec.backend == "timm":
+                batch = torch.stack([loaded.processor(image) for image in chunk])
+                parameter = next(loaded.model.parameters())
+                batch = batch.to(device=parameter.device, dtype=parameter.dtype)
+                features = loaded.model.forward_head(
+                    loaded.model.forward_features(batch), pre_logits=True
+                )
+            elif loaded.spec.backend == "image_classification":
+                batch = _move_batch_to_model(
+                    loaded.processor(images=chunk, return_tensors="pt"), loaded.model
+                )
+                output = loaded.model.base_model(pixel_values=batch["pixel_values"])
+                pooled = getattr(output, "pooler_output", None)
+                features = pooled if pooled is not None else output.last_hidden_state[:, 0]
+            else:
+                raise ValueError(f"{loaded.spec.name} has no closed-set feature extractor")
+        rows.append(features.flatten(1).float().cpu())
+    return torch.cat(rows, dim=0)
+
+
+def predict_images(
+    loaded: LoadedModel,
+    images: Sequence[Any],
+    class_names: Sequence[str],
+    template: str = "a photo of {}",
+) -> list[int]:
+    return image_logits(loaded, images, class_names, template).argmax(-1).tolist()
 
 
 def predict_nodes(loaded: LoadedModel, graph: Any, class_names: Sequence[str] | None = None) -> list[int]:

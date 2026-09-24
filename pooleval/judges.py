@@ -1,4 +1,4 @@
-"""Budgeted GPT-5.4/GPT-5.5/Claude Opus 5.5 judge ensemble."""
+"""Budgeted GPT-5.4/GPT-5.5/Claude Opus 4.5 judge ensemble for Text2SQL."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Protocol
+from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ class OpenAIJudge:
 
 
 class AnthropicJudge:
-    def __init__(self, model: str = "claude-opus-5-5", client: Any = None, effort: str = "low"):
+    def __init__(self, model: str = "claude-opus-4-5", client: Any = None, effort: str = "low"):
         self.model = model
         self.name = model
         self.effort = effort
@@ -140,35 +140,57 @@ class JudgeEnsemble:
             raise ValueError("judge ensemble cannot be empty")
         self.last_votes: dict[str, int] = {}
 
-    def choose(self, item: JudgeItem) -> int:
+    def choose(self, item: Any, support: Sequence[float] | None = None) -> int:
+        """Majority vote; ties go to the tied choice with the largest accuracy-weighted support.
+
+        ``support[k]`` is the summed estimated accuracy of the pool models that produced
+        candidate ``k``.  NONE (-1) is backed by no model, so its support is zero.  Any
+        remaining tie keeps the configured judge order.
+        """
         votes: list[int] = []
         self.last_votes = {}
         for judge in self.judges:
             vote = int(judge.choose(item))
             votes.append(vote)
             self.last_votes[judge.name] = vote
-        # Deterministic majority.  On a tie, prefer NONE to avoid hard-validating an
-        # answer without agreement; otherwise preserve configured judge order.
         counts = {vote: votes.count(vote) for vote in set(votes)}
         best = max(counts.values())
         winners = [vote for vote, count in counts.items() if count == best]
-        if -1 in winners:
-            return -1
-        return next(vote for vote in votes if vote in winners)
+        if len(winners) == 1:
+            return winners[0]
+
+        def weight(vote: int) -> float:
+            if vote < 0 or support is None or vote >= len(support):
+                return 0.0
+            return float(support[vote])
+
+        top = max(weight(vote) for vote in winners)
+        return next(vote for vote in votes if vote in winners and weight(vote) == top)
 
 
-def paper_judges(allow_partial: bool = True) -> JudgeEnsemble:
-    """Construct the requested ensemble, skipping unavailable providers only if allowed."""
+_PROVIDERS = {"openai": ("OPENAI_API_KEY", OpenAIJudge), "anthropic": ("ANTHROPIC_API_KEY", AnthropicJudge)}
+DEFAULT_MEMBERS = (
+    {"provider": "openai", "model": "gpt-5.4"},
+    {"provider": "openai", "model": "gpt-5.5"},
+    {"provider": "anthropic", "model": "claude-opus-4-5"},
+)
+
+
+def paper_judges(
+    allow_partial: bool = True, members: Iterable[Mapping[str, str]] | None = None
+) -> JudgeEnsemble:
+    """Construct the configured API ensemble, skipping unavailable providers only if allowed."""
     judges: list[Judge] = []
     missing: list[str] = []
-    if os.environ.get("OPENAI_API_KEY"):
-        judges.extend([OpenAIJudge("gpt-5.4"), OpenAIJudge("gpt-5.5")])
-    else:
-        missing.extend(["gpt-5.4", "gpt-5.5 (OPENAI_API_KEY)"])
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        judges.append(AnthropicJudge("claude-opus-5-5"))
-    else:
-        missing.append("claude-opus-5-5 (ANTHROPIC_API_KEY)")
+    for member in members or DEFAULT_MEMBERS:
+        provider, model = member["provider"], member["model"]
+        if provider not in _PROVIDERS:
+            raise ValueError(f"unknown judge provider {provider!r}")
+        key, cls = _PROVIDERS[provider]
+        if os.environ.get(key):
+            judges.append(cls(model))
+        else:
+            missing.append(f"{model} ({key})")
     if missing and not allow_partial:
         raise RuntimeError("missing credentials for: " + ", ".join(missing))
     if missing:

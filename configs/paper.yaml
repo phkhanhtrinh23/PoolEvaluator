@@ -5,18 +5,62 @@ runtime:
   deterministic: true
 
 data:
-  fusion_sql_root: datasets/text2sql
+  text2sql_root: datasets/text2sql
   bird_metadata_root: datasets/text2sql/bird
   bird_database_root: datasets/text2sql/bird
+  image_root: datasets/image
+  node_root: datasets/node
   output_root: artifacts
 
 method:
-  subset_budget: 15
-  judge_rounds: 10
-  judge_batch_size: 1
   max_em_iterations: 100
   tolerance: 1.0e-6
   smoothing: 1.0
+  judge_batch_size: 1
+  # K=0: every coordinate of theta^(0) is drawn from N(mean, std^2) truncated to (0, 1).
+  # With mean 0.5 and std 0.25, the interval (0, 1) spans +/- 2 standard deviations.
+  random_init:
+    mean: 0.5
+    std: 0.25
+
+tasks:
+  text2sql:
+    subset_budget: 15
+    judge_rounds: 10
+    encoder: colbert-ir/colbertv2.0
+  image:
+    subset_budget: 10
+    judge_rounds: 6
+    encoder: facebook/dinov2-small
+    target_items: 1000
+    meta_subsets: 50
+    meta_subset_size: 200
+    head_train_items: 5000
+    head_epochs: 100
+    batch_size: 64
+    cifar10c:
+      corruptions: all
+      severities: [1, 2, 3, 4, 5]
+  node:
+    subset_budget: 12
+    judge_rounds: 5
+    encoder_hops: 2
+    target_items: 1000
+    meta_subsets: 50
+    train:
+      epochs: 200
+      lr: 0.01
+      weight_decay: 5.0e-4
+      hidden: 128
+    # Source graph used to train the pool for each GNNEvaluator target graph.
+    sources:
+      acmv9: dblpv7
+      citationv1: acmv9
+      dblpv7: acmv9
+    good:
+      good-cora: {domain: word, shift: covariate}
+      good-twitch: {domain: language, shift: covariate}
+      good-webkb: {domain: university, shift: covariate}
 
 execution:
   modified_instances: 5
@@ -25,12 +69,33 @@ execution:
   mutation_fraction: 0.10
 
 judges:
-  aggregation: majority
-  allow_partial: true
-  members:
-    - provider: openai
-      model: gpt-5.4
-    - provider: openai
-      model: gpt-5.5
-    - provider: anthropic
-      model: claude-opus-5-5
+  text2sql:
+    aggregation: majority
+    tie_break: accuracy_weighted_support
+    allow_partial: true
+    members:
+      - provider: openai
+        model: gpt-5.4
+      - provider: openai
+        model: gpt-5.5
+      - provider: anthropic
+        model: claude-opus-4-5
+  image:
+    model: Qwen/Qwen2.5-VL-72B-Instruct
+    device_map: auto
+    max_new_tokens: 32
+  node:
+    runtime_repo: https://github.com/JiaruiFeng/GOFA.git
+    checkpoint_repo: WFRaain/GOFA
+    checkpoint: mistral_qamag03_best_ckpt.pth
+    icae_repo: sggetao/icae
+    icae_file: mistral_7b_ft_icae.safetensors
+    base_model: mistralai/Mistral-7B-Instruct-v0.2
+    # Interpreter of the environment built from GOFA's environment.yml.
+    python: python
+    max_neighbors: 10
+    max_new_tokens: 32
+
+# Node pool members that need their official runtime (GraphGPT, GraphPFN, LLaGA).
+# Map a model name to {python: <interpreter>, script: <runner>}; see README section 6.
+external_runners: {}

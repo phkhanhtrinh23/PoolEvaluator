@@ -1,4 +1,4 @@
-"""Spider/BIRD loading with the local FusionSQL layout used for the paper."""
+"""Spider/BIRD loading from the Text2SQL dataset layout described in the README."""
 
 from __future__ import annotations
 
@@ -25,18 +25,18 @@ class Text2SQLItem:
 def dataset_layout(
     dataset: str,
     split: str,
-    fusion_root: str | Path = "datasets/text2sql",
+    text2sql_root: str | Path = "datasets/text2sql",
     bird_metadata_root: str | Path = "datasets/text2sql/bird",
     bird_database_root: str | Path = "datasets/text2sql/bird",
 ) -> tuple[Path, list[Path]]:
-    fusion = Path(fusion_root)
+    root = Path(text2sql_root)
     bird_meta = Path(bird_metadata_root)
     bird_db = Path(bird_database_root)
     side = "dev" if split in {"dev", "target"} else "train"
     if dataset == "spider":
         return (
-            fusion / "spider" / f"sft_spider_{side}_text2sql.json",
-            [fusion / "spider" / "database", fusion / "spider" / "test_database"],
+            root / "spider" / f"sft_spider_{side}_text2sql.json",
+            [root / "spider" / "database", root / "spider" / "test_database"],
         )
     if dataset == "bird":
         roots = [

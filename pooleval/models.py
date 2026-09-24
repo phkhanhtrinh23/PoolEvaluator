@@ -326,6 +326,114 @@ class ModelPool:
             yield load_model(spec, self.cache_dir, **kwargs)
 
 
+SUPPORT_TASKS = ("text2sql", "image", "node")
+
+
+def download_support(
+    task: str,
+    cache_dir: str | Path = "checkpoints",
+    dry_run: bool = False,
+    config: dict[str, Any] | None = None,
+) -> list[Path]:
+    """Download the Stage 1 encoder and the Stage 3 judge a task needs.
+
+    text2sql: ColBERTv2 (the API judges need only credentials).
+    image:    DINOv2-small and Qwen2.5-VL-72B-Instruct.
+    node:     the GOFA source tree, its checkpoint and ICAE weights, and the gated
+              Mistral-7B-Instruct-v0.2 backbone (set HF_TOKEN after accepting its license).
+    The node encoder is parameter-free, so it needs no download.
+    """
+    from .config import paper_config
+
+    config = config or paper_config()
+    root = Path(cache_dir).expanduser().resolve()
+    tasks = SUPPORT_TASKS if task == "all" else (task,)
+    snapshots: list[tuple[str, Path, list[str] | None]] = []
+    files: list[tuple[str, str, Path]] = []
+    repos: list[tuple[str, Path]] = []
+    for name in tasks:
+        settings = config["tasks"][name]
+        if name == "text2sql":
+            encoder = settings["encoder"]
+            snapshots.append(
+                (encoder, root / "encoders" / encoder.rsplit("/", 1)[-1], ["*.json", "*.txt", "model.safetensors"])
+            )
+        elif name == "image":
+            encoder = settings["encoder"]
+            judge = config["judges"]["image"]["model"]
+            snapshots.append((encoder, root / "encoders" / encoder.rsplit("/", 1)[-1], None))
+            snapshots.append((judge, root / "judges" / judge.rsplit("/", 1)[-1], None))
+        elif name == "node":
+            gofa = config["judges"]["node"]
+            repos.append((gofa["runtime_repo"], root / "runtimes" / "GOFA"))
+            files.append((gofa["checkpoint_repo"], gofa["checkpoint"], root / "judges" / "GOFA"))
+            files.append((gofa["icae_repo"], gofa["icae_file"], root / "judges" / "GOFA"))
+            snapshots.append((gofa["base_model"], _shared_path(root, gofa["base_model"]), None))
+        else:
+            raise ValueError(f"unknown task {name!r}")
+    planned: list[Path] = []
+    prefix = "[dry-run] " if dry_run else ""
+    for repo, destination in repos:
+        planned.append(destination)
+        print(f"{prefix}{repo} -> {destination}")
+        if not dry_run and not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "clone", "--depth", "1", repo, str(destination)], check=True)
+    if not dry_run and (snapshots or files):
+        try:
+            from huggingface_hub import hf_hub_download, snapshot_download
+        except ImportError as exc:
+            raise RuntimeError("install model dependencies: pip install -e '.[models]'") from exc
+    for repo_id, filename, destination in files:
+        planned.append(destination / filename)
+        print(f"{prefix}{repo_id}/{filename} -> {destination}")
+        if not dry_run and not (destination / filename).exists():
+            hf_hub_download(repo_id=repo_id, filename=filename, local_dir=destination)
+    for repo_id, destination, patterns in snapshots:
+        planned.append(destination)
+        print(f"{prefix}{repo_id} -> {destination}")
+        if not dry_run:
+            snapshot_download(repo_id=repo_id, local_dir=destination, allow_patterns=patterns)
+    return planned
+
+
+def load_support(task: str, cache_dir: str | Path = "checkpoints", dtype: str = "bfloat16") -> None:
+    """Load a task's encoder and judge once, to verify the downloads."""
+    from .config import paper_config
+
+    config = paper_config()
+    settings = config["tasks"][task]
+    if task == "text2sql":
+        from .encoders import text_encoder
+        from .judges import paper_judges
+
+        encoder = text_encoder(settings["encoder"], cache_dir)
+        print(f"  encoder ready: {settings['encoder']} dim={encoder.encode(['ping']).shape[1]}")
+        judges = paper_judges(allow_partial=True, members=config["judges"]["text2sql"]["members"])
+        print(f"  API judges configured: {[judge.name for judge in judges.judges]}")
+    elif task == "image":
+        from .encoders import image_encoder
+        from .local_judges import load_image_judge
+
+        image_encoder(settings["encoder"], cache_dir)
+        print(f"  encoder ready: {settings['encoder']}")
+        judge = load_image_judge(config, cache_dir, dtype)
+        print(f"  judge ready: {judge.name}")
+    elif task == "node":
+        from .local_judges import NodeJudgeItem, gofa_graph, load_node_judge
+
+        judge = load_node_judge(config, cache_dir)
+        try:
+            probe = NodeJudgeItem(
+                "A paper about relational query optimization.", (), ("Databases", "Networking")
+            )
+            print(f"  GOFA judge ready; sample answer: {judge.generate(gofa_graph(probe))!r}")
+        finally:
+            judge.close()
+    else:
+        raise ValueError(f"unknown task {task!r}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -342,6 +450,12 @@ def main(argv: list[str] | None = None) -> None:
     p_load.add_argument("--device-map", default="auto")
     p_load.add_argument("--dtype", choices=["auto", "bfloat16", "float32"], default="bfloat16")
     p_load.add_argument("--seed", type=int, default=42)
+    p_support = sub.add_parser("support", help="download (and optionally load) encoders and judges")
+    p_support.add_argument("--task", choices=[*SUPPORT_TASKS, "all"], default="all")
+    p_support.add_argument("--cache-dir", default="checkpoints")
+    p_support.add_argument("--dry-run", action="store_true")
+    p_support.add_argument("--load", action="store_true", help="load them once after downloading")
+    p_support.add_argument("--dtype", choices=["auto", "bfloat16", "float32"], default="bfloat16")
     p_runtime = sub.add_parser("runtimes", help="prepare official external graph runtimes")
     p_runtime.add_argument("--task", choices=["node"], default="node")
     p_runtime.add_argument("--cache-dir", default="checkpoints")
@@ -365,6 +479,13 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "runtimes":
         prepare_runtimes(args.task, args.cache_dir, args.dry_run)
+        return
+    if args.command == "support":
+        download_support(args.task, args.cache_dir, args.dry_run)
+        if args.load and not args.dry_run:
+            for task in SUPPORT_TASKS if args.task == "all" else (args.task,):
+                print(f"[support:load] {task}")
+                load_support(task, args.cache_dir, args.dtype)
         return
     tasks = ("text2sql", "image", "node") if args.task == "all" else (args.task,)
     for task in tasks:

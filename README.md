@@ -12,8 +12,10 @@ This is the paper-aligned artifact for **"Which Model Should Be Chosen? Joint Pe
 - Lazy download/loading for Transformers, timm, PyTorch Geometric, zero-shot vision, and graph adapter/projector repositories in [`pooleval/models.py`](pooleval/models.py).
 - Stage 1 top-K subset retrieval, Stage 2 closed-form EM over (α<sub>j</sub>, β<sub>j</sub>, γ<sub>j</sub>), and Stage 3 warm-started judge validation.
 - EX-Extended evaluation on the original SQLite database plus **five modified instances**, with deterministic caching and integrity checks.
-- GPT-5.4, GPT-5.5, and Claude Opus 5.5 judge adapters and majority aggregation.
-- One shell entry point for tests, dry-run model preparation, database generation, and full Spider/BIRD evaluation.
+- Stage 1 encoders: ColBERTv2 for Text2SQL questions, DINOv2 for images, and parameter-free feature propagation for graph nodes.
+- Text2SQL judges GPT-5.4, GPT-5.5, and Claude Opus 4.5 with majority voting, ties broken by accuracy-weighted support. Local judges: Qwen2.5-VL-72B-Instruct for images and GOFA for graphs.
+- End-to-end pipelines for Text2SQL (Spider, BIRD), image classification (seven targets), and node classification (seven targets).
+- One shell entry point for tests, dry-run model preparation, database generation, and full evaluation.
 
 The two manuscript figures are committed as README assets. PDFs and exploratory reports are deliberately absent from `main`. The paper itself remains the source of truth for tables and derivations.
 
@@ -34,6 +36,10 @@ python -m pip install -e '.[dev]'
 
 # Add model runtimes and API clients on an experiment machine
 python -m pip install -e '.[models,judges]'
+
+# Optional: ogbn-arxiv needs OGB; GOOD targets need the GOOD package
+python -m pip install -e '.[graph-data]'
+python -m pip install git+https://github.com/divelab/GOOD.git
 ```
 
 `torch-geometric` may require a CUDA-specific wheel on older systems. Follow the [PyG installation matrix](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html) if the normal extra does not match the installed PyTorch/CUDA build.
@@ -84,7 +90,7 @@ export BIRD_DATABASE_ROOT="$POOLEVAL_DATASETS/text2sql/bird"
 export POOLEVAL_ARTIFACT_ROOT="$PWD/artifacts"
 ```
 
-The portable defaults use `datasets/text2sql/` inside the repository. For a dataset stored elsewhere, pass `--fusion-sql-root`, `--bird-metadata-root`, and `--bird-database-root` to the Python entry points, or set the environment variables above when using `scripts/run_all.sh`. The loaders skip Git-LFS pointer stubs and require materialized SQLite files larger than 4 KiB. The other five Text2SQL benchmarks need dataset-specific metadata/database adapters before they can enter the common `Text2SQLItem` interface. Their upstream SQL dialects are not interchangeable.
+The portable defaults use `datasets/text2sql/` inside the repository. For a dataset stored elsewhere, pass `--text2sql-root`, `--bird-metadata-root`, and `--bird-database-root` to the Python entry points, or set the environment variables above when using `scripts/run_all.sh`. The loaders skip Git-LFS pointer stubs and require materialized SQLite files larger than 4 KiB. The other five Text2SQL benchmarks need dataset-specific metadata/database adapters before they can enter the common `Text2SQLItem` interface. Their upstream SQL dialects are not interchangeable.
 
 ### Image-classification datasets
 
@@ -103,17 +109,34 @@ The paper uses MNIST, CIFAR-10, and ImageNet as labeled source datasets and eval
 | Target | ImageNet-R | [official repository](https://github.com/hendrycks/imagenet-r) | `datasets/image/imagenet-r/` |
 | Target | ImageNet-Sketch | [official repository](https://github.com/HaohanWang/ImageNet-Sketch) | `datasets/image/imagenet-sketch/` |
 
-MNIST, CIFAR-10, USPS, and SVHN can be materialized directly into their listed directories with their `torchvision.datasets` classes and `download=True`. ImageNet requires accepting its access terms. Preserve each archive's upstream class-directory names and map them to the official ImageNet-1K indices. Do not derive labels by sorting folder names independently for each target.
+MNIST, CIFAR-10, USPS, SVHN, and CIFAR-10.1 are downloaded automatically into their listed directories on first use. Extract CIFAR-10-C so that `datasets/image/cifar10-c/` (or its `CIFAR-10-C/` subfolder) holds `labels.npy` and one `<corruption>.npy` per corruption. ImageNet requires accepting its access terms and must be arranged as `imagenet/val/<wnid>/*.JPEG`. The loader takes the official ImageNet-1K index order from the 1000 sorted WordNet ids of that folder and maps ImageNet-R and ImageNet-Sketch folders (`<wnid>/`) and ImageNet-V2 folders (`0`–`999`) onto it. It never re-sorts a target's folders independently. ImageNet-R predictions are restricted to its 200 classes. Single wrapper directories left by archives, such as `imagenet-r/imagenet-r/`, are skipped automatically.
 
 ### Node-classification datasets
 
 | Dataset | Official source | Save or extract to | Access notes |
 |---|---|---|---|
-| ACMv9, Citationv1, DBLPv7 | [GNNEvaluator repository and dataset link](https://github.com/Amanda-Zheng/GNNEvaluator) | `datasets/node/gnnevaluator/{acmv9,citationv1,dblpv7}/` | Use the Google Drive folder linked under **Instructions** in the repository. |
+| ACMv9, Citationv1, DBLPv7 | [GNNEvaluator repository and dataset link](https://github.com/Amanda-Zheng/GNNEvaluator) | `datasets/node/gnnevaluator/{acmv9,citationv1,dblpv7}/` | Use the Google Drive folder linked under **Instructions** in the repository. The loader finds `<name>_docs.txt`, `<name>_edgelist.txt`, and `<name>_labels.txt` anywhere below the listed folder. |
 | ogbn-arxiv | [official OGB documentation](https://ogb.stanford.edu/docs/nodeprop/#ogbn-arxiv) | `datasets/node/ogb/` | `PygNodePropPredDataset(name="ogbn-arxiv", root=...)` downloads it automatically. |
 | GOOD-Cora, GOOD-Twitch, GOOD-WebKB | [official GOOD repository](https://github.com/divelab/GOOD), [dataset API](https://good.readthedocs.io/en/latest/_autosummary/GOOD.data.good_datasets.html) | `datasets/node/good/{GOODCora,GOODTwitch,GOODWebKB}/` | Use the predefined GOOD domain and shift splits from the paper experiment. |
 
-Load graph datasets as PyG `Data` objects, retain the official train/validation/test or OOD masks, and pass the selected target graph to `predict_nodes()`. Released graph language models additionally require `graph.node_prompts` and the target class names.
+The node pipeline trains the pool on labeled source nodes and evaluates on the target nodes. For ACMv9, Citationv1, and DBLPv7, the pool trains on a different source graph set in `tasks.node.sources` (default: ACMv9 for the other two, DBLPv7 for ACMv9) and uses GNNEvaluator's 70/30 source split. For ogbn-arxiv it trains on the OGB train split and evaluates on the test split. For GOOD it trains on the train split and evaluates on the OOD test split of the domain and shift set in `tasks.node.good`. If the GNNEvaluator files are missing, the loader downloads the AdaGCN `.mat` release of the same graphs instead. That release is multi-label, so each node's first label is used, and the run report records a warning.
+
+GOFA and the graph language models need node text, and GOFA prompts name the candidate labels. Two files in a dataset folder supply them: `node_text.json`, a list of node texts aligned with node indices, and `class_names.json`, the label names (without it, labels are called `category k`). ogbn-arxiv gets real category names and title/abstract text automatically. Build the files for the other targets from public raw releases (about 300 MB of downloads, cached under `datasets/node/raw_text/`):
+
+```bash
+python -m pooleval.node_metadata --dataset all --node-root "$POOLEVAL_DATASETS/node"
+```
+
+| Target | Node text | Class names |
+|---|---|---|
+| GOOD-Cora | Title and abstract from the original McCallum Cora release, matched by paper id (19,380 of 19,793 nodes; the rest get their top bag-of-words terms) | The 70 Cora topic paths |
+| GOOD-WebKB | Page title and text from the CMU WebKB archive, reached by matching each node's word vector to its LINQS row and URL | Recovered per university (see below) |
+| GOOD-Twitch | A description from SNAP account metadata (language, account age, views, partner status, number of games). Twitch has no text, and the label is never included | "does not stream mature content", "streams mature content" |
+| ACMv9, Citationv1, DBLPv7 | None: only title bag-of-words vectors over an unpublished vocabulary were released | Written only with `--citation-label-order "A,B,C,D,E"`. The five areas (Database, Artificial Intelligence, Computer Vision, Information Security, Networking) are documented, but not which label index is which |
+
+Each build also writes `node_meta.json` with the node count and a SHA-1 of the label sequence. The loaders use the text and names only if the graph they load matches. This also verifies the Twitch alignment, which assumes PyG node *i* is MUSAE `new_id` *i*; PyG's Twitch host is offline, so it could not be checked at build time.
+
+**WebKB labels differ by university.** The Geom-GCN files behind PyG's `WebKB`, and therefore GOOD-WebKB, number the five classes separately for each university. Label 0 is *course* at Cornell and Texas but *staff* at Wisconsin, and label 4 is *project* at Cornell and Wisconsin but *faculty* at Texas. GOOD's covariate split trains on Cornell and Texas and tests on Wisconsin, so the same index names different classes in training and test. `class_names.json` stores one list per university, and the loader uses the target university's names. It refuses a target that spans universities whose lists differ.
 
 ## 3. Inspect, download, and load the paper model pools
 
@@ -137,6 +160,14 @@ python -m pooleval.models download --task node     --cache-dir checkpoints
 python -m pooleval.models runtimes --task node --cache-dir checkpoints
 ```
 
+Download the retrieval encoders and the local judges (`--dry-run` lists them first). Text2SQL uses ColBERTv2. Images use DINOv2-small and Qwen2.5-VL-72B-Instruct. Graphs use GOFA: its source tree, the `mistral_qamag03_best_ckpt.pth` checkpoint, the ICAE weights, and the gated `mistralai/Mistral-7B-Instruct-v0.2` backbone (accept its license and set `HF_TOKEN`). `--load` loads each one once to verify it.
+
+```bash
+python -m pooleval.models support --task all --cache-dir checkpoints --dry-run
+python -m pooleval.models support --task all --cache-dir checkpoints
+python -m pooleval.models support --task text2sql --cache-dir checkpoints --load
+```
+
 Verify runtime loading sequentially (a loaded member is released before the next):
 
 ```bash
@@ -145,7 +176,7 @@ python -m pooleval.models load --task image    --cache-dir checkpoints
 python -m pooleval.models load --task node     --cache-dir checkpoints
 ```
 
-The large 70B/72B checkpoints need a multi-GPU machine. `device_map=auto` is used. Local Transformers, timm, and PyG inference explicitly requests bfloat16 on supported CUDA hardware and safely falls back to float32 elsewhere. Pass `--dtype float32` to force float32 or `--dtype auto` to delegate dtype selection to Transformers. `ModelPool.iter_load()` is the programmatic entry point. [`pooleval/adapters.py`](pooleval/adapters.py) turns loaded members into Text2SQL, image, or node predictions. The two LLaGA entries consist of a Vicuna base plus a released projector. GraphGPT additionally downloads its released graph encoder. GraphGPT, GraphPFN, and LLaGA retain their official runtimes because their custom graph types are not supported by Transformers `AutoModel`. They enter the common adapter via `graph.external_runner(checkpoint, graph, class_names)`. GraphPFN's public repository contains graph-adapter weights, but its required LimiX backbone has a separate license. Obtain that backbone under its upstream terms before running GraphPFN. Local checkpoint paths are retained in `LoadedModel.local_path`.
+The large 70B/72B checkpoints need a multi-GPU machine. `device_map=auto` is used. Local Transformers, timm, and PyG inference explicitly requests bfloat16 on supported CUDA hardware and safely falls back to float32 elsewhere. Pass `--dtype float32` to force float32 or `--dtype auto` to delegate dtype selection to Transformers. `ModelPool.iter_load()` is the programmatic entry point. [`pooleval/adapters.py`](pooleval/adapters.py) turns loaded members into Text2SQL, image, or node predictions. The two LLaGA entries consist of a Vicuna base plus a released projector. GraphGPT additionally downloads its released graph encoder. GraphGPT, GraphPFN, and LLaGA retain their official runtimes because their custom graph types are not supported by Transformers `AutoModel`. The node pipeline runs them through the external-runner protocol in section 6. GraphPFN's public repository contains graph-adapter weights, but its required LimiX backbone has a separate license. Obtain that backbone under its upstream terms before running GraphPFN. Local checkpoint paths are retained in `LoadedModel.local_path`.
 
 ## 4. Create EX-Extended database instances
 
@@ -167,18 +198,22 @@ python -m pooleval.databases --dataset bird   --limit-databases 1 --output-dir a
 
 Each source database gets `instance_1.sqlite` through `instance_5.sqlite` plus an `instances.json` metadata file. The variants make deterministic value replacements, deletions, and insertions, then run `PRAGMA integrity_check`. Source databases are opened read-only by the evaluator and are never modified.
 
-## 5. Configure the judge ensemble
+## 5. Configure the judges
 
-Set the provider credentials before enabling Stage 3:
+**Text2SQL.** Set the provider credentials before enabling Stage 3:
 
 ```bash
 export OPENAI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-GPT-5.4 and GPT-5.5 use the OpenAI Responses API with strict JSON-schema output. Claude Opus 5.5 uses Anthropic’s Messages API. An OpenAI key cannot authenticate to Anthropic, so `ANTHROPIC_API_KEY` is required for the requested three-member ensemble. By default a missing provider is reported and the available judges continue. Pass `--require-all-judges` for strict three-member behavior.
+GPT-5.4 and GPT-5.5 use the OpenAI Responses API with strict JSON-schema output. Claude Opus 4.5 (`claude-opus-4-5`) uses Anthropic's Messages API with JSON-schema output. The members are listed under `judges.text2sql.members` in `configs/paper.yaml`. The ensemble takes a majority vote over candidate answers and NONE. A tie goes to the tied choice with the largest accuracy-weighted support: the summed current α of the pool models that produced it. NONE is backed by no model, so its support is zero. Any remaining tie keeps the configured judge order. By default a missing provider is reported and the available judges continue. Pass `--require-all-judges` for strict three-member behavior.
 
-The manuscript draft names Claude Opus 4.5, whereas this artifact intentionally uses **Claude Opus 5.5** as requested. The configured model IDs are `gpt-5.4`, `gpt-5.5`, and `claude-opus-5-5`.
+**Image.** Qwen2.5-VL-72B-Instruct is loaded from `checkpoints/judges/` with Transformers and `device_map=auto`. In bfloat16 its weights need about 145 GB of GPU memory. With less, Accelerate offloads the remainder to CPU, which is slower.
+
+**Node.** GOFA pins its own dependencies, so it runs in its own environment. Create that environment from `checkpoints/runtimes/GOFA/environment.yml` and set `judges.node.python` to its interpreter. `pooleval.local_judges.GOFAJudge` then starts [`scripts/runners/gofa_judge.py`](scripts/runners/gofa_judge.py) once per run and sends one query per judge round. Each query is the target node, up to `max_neighbors` neighbors, and a question node listing the candidate labels plus "None of the above". GOFA needs node text (section 2).
+
+Every judge picks one of the pool's valid candidate answers or NONE. An output that can never be correct is not a candidate: a SQL query that fails on the original database or any of the five modified instances, or a node answer a model could not map to a class. An item with no valid candidate is never sent to a judge.
 
 ## 6. Run PoolEvaluator
 
@@ -201,6 +236,31 @@ python -m pooleval.pipeline text2sql \
 
 Enable judge refinement by adding `--judge`. Predictions, modified databases, and reports are cached under `artifacts/`, so interrupted runs are resumable.
 
+`--subset-budget K` overrides the configured K for any task. With `--subset-budget 0`, retrieval and calibration are skipped. Every coordinate of θ<sup>(0)</sup> is then drawn from a normal distribution with mean 0.5 and standard deviation 0.25, truncated to (0, 1), so the interval spans ±2 standard deviations (`method.random_init`). Reports from runs with a non-default K are named `<dataset>_k<K>_report.json`.
+
+Image and node targets run the same three stages:
+
+```bash
+python -m pooleval.pipeline image --dataset usps --judge
+python -m pooleval.pipeline node --dataset dblpv7 --judge
+python -m pooleval.pipeline node --dataset dblpv7 --skip-external   # PyG members only
+```
+
+The image pipeline samples `target_items` images from the target (1000 by default). It builds 50 meta-subsets of 200 source-test images, each with one synthetic shift family at a random severity (rotation, color, blur, noise, perspective, contrast, posterize, invert, sharpness, or occlusion). It retrieves the top `K=10` subsets by DINOv2 similarity, and the Qwen2.5-VL judge runs `V=6` rounds. ImageNet targets use each classifier's native ImageNet-1K head. Digit and CIFAR targets get a linear head per model, trained on `head_train_items` frozen features from the source training split. The CLIP and SigLIP models classify zero-shot from class-name prompts.
+
+The node pipeline samples `target_items` target nodes. It builds 50 GNNEvaluator-style meta-graphs from the held-out labeled source nodes, rotating through EdgeDrop, node-feature masking, and subgraph sampling at random rates. It retrieves the top `K=12` meta-graphs by the mean of propagated node features, (D<sup>-1/2</sup>(A+I)D<sup>-1/2</sup>)<sup>2</sup>X. It trains each PyG architecture on the labeled source training nodes with the run seed, and GOFA runs `V=5` judge rounds.
+
+### External graph runtimes
+
+GraphGPT-7B, GraphPFN-1.3, and the two LLaGA checkpoints only run inside their official code. Configure a runner for each under `external_runners` in `configs/paper.yaml`:
+
+```yaml
+external_runners:
+  GraphGPT-7B: {python: /envs/graphgpt/bin/python, script: /path/to/graphgpt_runner.py}
+```
+
+The pipeline calls `python script --job job.json --output predictions.json`. `job.json` contains the model name, its downloaded `checkpoint`, `base`, and `auxiliary` paths, its cloned `runtime` directory, the `class_names`, and one entry per graph: `key`, `graph` (a torch file with `x` and `edge_index` only; labels are never written), `nodes`, and `node_text` (a JSON list, or null). The runner writes `{key: [class index, or -1 when the answer maps to no class]}`. Without a configured runner, the node pipeline stops with an error. `--skip-external` instead leaves these members out and lists them under `excluded_models` in the report.
+
 The paper configuration fixes the seed to `42`. At pipeline startup, `seed_everything()` seeds Python, NumPy, PyTorch, and every available CUDA device. It also requests deterministic PyTorch algorithms, disables cuDNN benchmarking, and configures deterministic cuDNN behavior. Use `--seed N` to override the configured seed. Dataset code that creates a PyTorch `DataLoader` should include the supplied worker seeding options:
 
 ```python
@@ -218,12 +278,12 @@ PoolEvaluator's closed-form EM remains NumPy computation and does not use bfloat
 
 The Text2SQL execution path is:
 
-1. Group labeled calibration examples by database, embed their questions, and retrieve the top `K=15` subsets by cosine similarity.
+1. Group labeled calibration examples by database, embed their questions with ColBERTv2, and retrieve the top `K=15` subsets by cosine similarity of the mean embeddings. With `K=0`, skip to step 2 and use the random truncated-normal prior in step 4.
 2. Run each pool member lazily on calibration and target prompts.
 3. Execute every SQL answer on the original database and five variants. Two answers agree only if their canonical results agree on all six instances.
 4. Compute leave-one-model-out consensus and initialize α, β, and γ from the retrieved labeled subsets.
 5. Run closed-form EM until the infinity-norm change is below `1e-6`.
-6. For `V=10` rounds, select the item with the largest posterior entropy, ask the judge ensemble, hard-fix the revealed correctness vector, and warm-start EM.
+6. For up to `V=10` rounds, select the unjudged item with the largest expected information gain (expected reduction in posterior entropy of the remaining items), ask the judge ensemble to choose among its executable candidates or NONE, hard-fix the revealed correctness vector, and warm-start EM. Stop early when no item has positive gain.
 7. Write estimated accuracies, ranking, true held-out EX-Extended metrics, and run metadata to `artifacts/<dataset>_report.json`.
 
 Gold SQL is used only to compute calibration priors and post-hoc evaluation metrics. It is never included in a target model prompt or judge prompt.
@@ -257,12 +317,17 @@ INFERENCE_DTYPE=bfloat16 # use float32 automatically when bfloat16 is unsupporte
 SEED=42                  # Python, NumPy, PyTorch, CUDA, and loader seed
 DOWNLOAD_MODELS=0        # reuse existing checkpoints
 PREPARE_EXTERNAL_RUNTIMES=0 # clone official custom graph-model code
+DOWNLOAD_SUPPORT=1       # download ColBERTv2, DINOv2, Qwen2.5-VL-72B, and GOFA
+SUBSET_BUDGET=0          # override K for every task; 0 = random truncated-normal prior
 RUN_JUDGES=0             # stop after Stage 2
+RUN_IMAGE=1              # also run the image targets (IMAGE_TARGETS="usps svhn ...")
+RUN_NODE=1               # also run the node targets (NODE_TARGETS="acmv9 dblpv7 ...")
+SKIP_EXTERNAL=1          # node runs without GraphGPT/GraphPFN/LLaGA runners
 LOAD_ALL_POOLS=1         # additionally load all Text2SQL/image/node members in sequence
 DB_SMOKE_LIMIT=2         # databases per dataset in the initial database smoke test
 ```
 
-Running the entire appendix pools requires the corresponding image and graph datasets and class mappings. Load those datasets in the standard torchvision/PyG form, then call `predict_images()` or `predict_nodes()` from `pooleval.adapters`. Both return the `[items]` label vector consumed by the same `PoolEvaluator.fit()` API.
+The image and node runs need their datasets under `$POOLEVAL_DATASETS/image` and `$POOLEVAL_DATASETS/node` (section 2).
 
 ## 8. Tests and repository map
 
@@ -272,17 +337,26 @@ python -m pytest -q
 
 ```text
 assets/                  paper figures used above
-configs/paper.yaml       K, V, EM, execution, paths, and judge defaults
+configs/paper.yaml       per-task K and V, EM, random prior, paths, and judge defaults
 model_pools/             all appendix model pools
 pooleval/estimator.py    leave-one-out agreement and closed-form EM
-pooleval/retrieval.py    top-K meta-subset retrieval
+pooleval/retrieval.py    top-K Text2SQL subset retrieval
+pooleval/encoders.py     ColBERTv2, DINOv2, and graph-propagation encoders
 pooleval/databases.py    five-instance SQLite generator
 pooleval/execution.py    read-only SQL and EX-Extended equivalence
 pooleval/models.py       checkpoint download and lazy loading
 pooleval/adapters.py     Text2SQL/image/node prediction adapters
-pooleval/judges.py       three-model judge ensemble
-pooleval/pipeline.py     end-to-end orchestration
+pooleval/judges.py       Text2SQL API judge ensemble
+pooleval/local_judges.py Qwen2.5-VL image judge and GOFA node judge
+pooleval/core.py         shared Stage 1-3 driver
+pooleval/pipeline.py     CLI and the Text2SQL pipeline
+pooleval/image_data.py   image sources, targets, and synthetic-shift meta-subsets
+pooleval/image_pipeline.py image-classification pipeline
+pooleval/graph_data.py   graph sources, targets, and GNNEvaluator meta-graphs
+pooleval/node_metadata.py node text and class names from public raw releases
+pooleval/node_pipeline.py node-classification pipeline and external runners
 pooleval/reproducibility.py runtime seeds and deterministic PyTorch configuration
 scripts/run_all.sh       smoke and full reproduction entry point
+scripts/runners/         GOFA judge server
 tests/                   deterministic unit and integration tests
 ```
