@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Protocol, Sequence
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 
 @dataclass(frozen=True)
@@ -140,19 +142,24 @@ class JudgeEnsemble:
             raise ValueError("judge ensemble cannot be empty")
         self.last_votes: dict[str, int] = {}
 
-    def choose(self, item: Any, support: Sequence[float] | None = None) -> int:
-        """Majority vote; ties go to the tied choice with the largest accuracy-weighted support.
-
-        ``support[k]`` is the summed estimated accuracy of the pool models that produced
-        candidate ``k``.  NONE (-1) is backed by no model, so its support is zero.  Any
-        remaining tie keeps the configured judge order.
-        """
+    def votes(self, item: Any) -> list[int]:
+        """Ask every member judge; each vote is a candidate index or -1 (NONE)."""
         votes: list[int] = []
         self.last_votes = {}
         for judge in self.judges:
             vote = int(judge.choose(item))
             votes.append(vote)
             self.last_votes[judge.name] = vote
+        return votes
+
+    @staticmethod
+    def aggregate(votes: Sequence[int], support: Sequence[float] | None = None) -> int:
+        """Majority vote; ties go to the tied choice with the largest accuracy-weighted support.
+
+        ``support[k]`` is the summed estimated accuracy of the pool models that produced
+        candidate ``k``.  NONE (-1) is backed by no model, so its support is zero.  Any
+        remaining tie keeps the configured judge order.
+        """
         counts = {vote: votes.count(vote) for vote in set(votes)}
         best = max(counts.values())
         winners = [vote for vote, count in counts.items() if count == best]
@@ -166,6 +173,59 @@ class JudgeEnsemble:
 
         top = max(weight(vote) for vote in winners)
         return next(vote for vote in votes if vote in winners and weight(vote) == top)
+
+    def choose(self, item: Any, support: Sequence[float] | None = None) -> int:
+        return self.aggregate(self.votes(item), support)
+
+    @property
+    def signature(self) -> str:
+        return ",".join(judge.name for judge in self.judges)
+
+
+class CachedJudge:
+    """Stage 3 judge callable that memoizes ensemble votes per (item, candidate set).
+
+    Repeated runs over sampled pools ask about the same items many times; the votes are
+    stored (optionally on disk) with the wall time of the original calls, and a replayed
+    vote reports that original time in ``last_seconds`` so latency stays end-to-end.
+    Votes are aggregated with the accuracy-weighted support of the current run.
+    """
+
+    def __init__(
+        self,
+        ensemble: JudgeEnsemble,
+        make_item: Callable[[int, list[Any]], Any],
+        namespace: str,
+        path: Path | None = None,
+    ):
+        self.ensemble = ensemble
+        self.make_item = make_item
+        self.namespace = f"{namespace}|{ensemble.signature}"
+        self.path = path
+        self.cache: dict[str, dict[str, Any]] = {}
+        if path is not None and path.exists():
+            self.cache = json.loads(path.read_text(encoding="utf-8"))
+        self.last_seconds = 0.0
+        self.calls = 0
+
+    def _key(self, item: int, candidates: Sequence[Any]) -> str:
+        return f"{self.namespace}|{item}|{json.dumps(list(candidates), default=str)}"
+
+    def __call__(self, item: int, candidates: list[Any], support: list[float]) -> Any:
+        key = self._key(item, candidates)
+        entry = self.cache.get(key)
+        if entry is None:
+            start = time.perf_counter()
+            votes = self.ensemble.votes(self.make_item(item, candidates))
+            entry = {"votes": votes, "seconds": time.perf_counter() - start}
+            self.cache[key] = entry
+            self.calls += 1
+            if self.path is not None:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.path.write_text(json.dumps(self.cache), encoding="utf-8")
+        self.last_seconds = float(entry["seconds"])
+        choice = self.ensemble.aggregate(entry["votes"], support)
+        return candidates[choice] if choice >= 0 else f"__none__{item}"
 
 
 _PROVIDERS = {"openai": ("OPENAI_API_KEY", OpenAIJudge), "anthropic": ("ANTHROPIC_API_KEY", AnthropicJudge)}

@@ -56,12 +56,18 @@ common_args=(
 if [[ -n "${SUBSET_BUDGET:-}" ]]; then
   common_args+=(--subset-budget "$SUBSET_BUDGET")  # 0 = random truncated-normal prior
 fi
+if [[ -n "${JUDGE_ROUNDS:-}" ]]; then
+  common_args+=(--judge-rounds "$JUDGE_ROUNDS")
+fi
+if [[ "${REPEATS:-0}" != "0" ]]; then
+  common_args+=(--repeats "$REPEATS")  # repeated runs over sampled pools with 95% CIs
+fi
 text2sql_judge_args=("${judge_args[@]}")
 if [[ "${REQUIRE_ALL_JUDGES:-0}" == "1" ]]; then
   text2sql_judge_args+=(--require-all-judges)
 fi
 
-for dataset in spider bird; do
+for dataset in ${TEXT2SQL_TARGETS:-spider bird}; do
   python -m pooleval.pipeline text2sql \
     --dataset "$dataset" \
     --target-items "${TARGET_ITEMS:-150}" \

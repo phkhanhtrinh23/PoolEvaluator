@@ -65,6 +65,7 @@ def test_external_runner_protocol_hides_labels(tmp_path):
     from torch_geometric.data import Data
 
     from pooleval.config import load_model_pool
+    from pooleval.graph_data import NodeTask
     from pooleval.node_pipeline import run_external
 
     runner = tmp_path / "runner.py"
@@ -72,6 +73,7 @@ def test_external_runner_protocol_hides_labels(tmp_path):
         "import argparse, json, torch\n"
         "p = argparse.ArgumentParser(); p.add_argument('--job'); p.add_argument('--output')\n"
         "a = p.parse_args(); job = json.load(open(a.job))\n"
+        "assert set(torch.load(job['train']['graph'])) == {'x', 'edge_index'}\n"
         "out = {}\n"
         "for g in job['graphs']:\n"
         "    saved = torch.load(g['graph'])\n"
@@ -81,17 +83,22 @@ def test_external_runner_protocol_hides_labels(tmp_path):
     )
     spec = next(s for s in load_model_pool("node") if s.backend == "external")
     graph = Data(x=torch.randn(5, 3), edge_index=torch.tensor([[0, 1], [1, 2]]), y=torch.tensor([0, 1, 1, 0, 1]))
+    task = NodeTask("toy", graph, np.array([0, 1]), np.array([2]), graph, np.array([3, 4]), ["a", "b"])
     output = run_external(
         spec,
         {"python": sys.executable, "script": str(runner)},
         {"target": (graph, np.array([0, 3]), ["t0", "t1", "t2", "t3", "t4"])},
-        ["a", "b"],
+        task,
         tmp_path / "checkpoints",
         tmp_path / "job",
+        "citation network",
     )
     assert output == {"target": [1, 1]}
     job = json.loads((tmp_path / "job" / "job.json").read_text())
     assert job["model"] == spec.name and job["graphs"][0]["nodes"] == [0, 3]
+    assert job["graphs"][0]["same_as_train"] is True and job["domain"] == "citation network"
+    # Only the source training nodes carry labels.
+    assert job["train"]["nodes"] == [0, 1] and job["train"]["labels"] == [0, 1]
 
 
 def test_node_metadata_parsers():
@@ -121,7 +128,7 @@ def test_node_files_check_fingerprint_and_domain_names(tmp_path):
     _write(tmp_path, y, "test", ["built for a test"], ["t0", "t1", "t2", "t3"], names)
     text, resolved, notes = _node_files(tmp_path, graph, np.array([2, 3]))
     assert text[2] == "t2" and resolved == ["y", "x"] and "built for a test" in notes
-    with pytest.raises(ValueError, match="different classes"):
+    with pytest.raises(ValueError, match="different class names"):
         _node_files(tmp_path, graph, np.array([0, 3]))
     shuffled = _data(np.eye(4), np.array([[0, 1], [1, 2]]), [1, 0, 0, 1])
     with pytest.raises(ValueError, match="different node order"):

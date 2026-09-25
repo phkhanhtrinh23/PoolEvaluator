@@ -13,7 +13,7 @@ data:
   output_root: artifacts
 
 method:
-  max_em_iterations: 100
+  max_em_iterations: 2500
   tolerance: 1.0e-6
   smoothing: 1.0
   judge_batch_size: 1
@@ -28,6 +28,14 @@ tasks:
     subset_budget: 15
     judge_rounds: 10
     encoder: colbert-ir/colbertv2.0
+    # Labeled training splits used as Stage 1 calibration data for benchmarks without one.
+    calibration_sources: [spider, bird]
+    language: en            # EntSQL question language
+    max_evidence_chars: null
+    # Server database names, when they differ from the benchmark's database ids.
+    database_names:
+      beaver: {}
+      sciencebenchmark: {}
   image:
     subset_budget: 10
     judge_rounds: 6
@@ -47,6 +55,7 @@ tasks:
     encoder_hops: 2
     target_items: 1000
     meta_subsets: 50
+    train_seeds: 3
     train:
       epochs: 200
       lr: 0.01
@@ -61,6 +70,11 @@ tasks:
       good-cora: {domain: word, shift: covariate}
       good-twitch: {domain: language, shift: covariate}
       good-webkb: {domain: university, shift: covariate}
+
+# Repeated runs over sampled pools (--repeats N): pool sizes larger than the pool are skipped.
+experiments:
+  repeats: 10
+  pool_sizes: [5, 10, 15, 20, 25, 30]
 
 execution:
   modified_instances: 5
@@ -96,6 +110,10 @@ judges:
     max_neighbors: 10
     max_new_tokens: 32
 
-# Node pool members that need their official runtime (GraphGPT, GraphPFN, LLaGA).
-# Map a model name to {python: <interpreter>, script: <runner>}; see README section 6.
-external_runners: {}
+# Node pool members that run in their official runtime (README section 6).  Set
+# ``python`` to the interpreter of each model's environment.
+external_runners:
+  GraphGPT-7B: {python: python, script: scripts/runners/graphgpt_runner.py}
+  GraphPFN-1.3: {python: python, script: scripts/runners/graphpfn_runner.py}
+  LLaGA-HO-Classification: {python: python, script: scripts/runners/llaga_runner.py, args: [--template, HO]}
+  LLaGA-ND-Classification: {python: python, script: scripts/runners/llaga_runner.py, args: [--template, ND]}

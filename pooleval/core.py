@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gc
 import json
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -23,6 +25,21 @@ def subset_budget(requested: int | None, settings: Mapping[str, Any]) -> int:
     return budget
 
 
+def judge_rounds(requested: int | None, settings: Mapping[str, Any]) -> int:
+    rounds = int(settings.get("judge_rounds", 0) if requested is None else requested)
+    if rounds < 0:
+        raise ValueError("the judge-round budget V must be non-negative")
+    return rounds
+
+
+def repeat_settings(args: Any, config: Mapping[str, Any]) -> tuple[list[int], int]:
+    """Pool sizes and repeat count for ``--repeats`` runs (CLI overrides the config)."""
+    experiments = config.get("experiments", {})
+    sizes = getattr(args, "pool_sizes", None) or experiments.get("pool_sizes", [5, 10, 15, 20, 25, 30])
+    repeats = int(getattr(args, "repeats", 0) or experiments.get("repeats", 10))
+    return [int(size) for size in sizes], repeats
+
+
 def build_evaluator(config: Mapping[str, Any], seed: int) -> PoolEvaluator:
     method = config["method"]
     init = method.get("random_init", {})
@@ -36,6 +53,46 @@ def build_evaluator(config: Mapping[str, Any], seed: int) -> PoolEvaluator:
     )
 
 
+@dataclass
+class PoolRun:
+    """One PoolEvaluator run: the estimate plus what the paper's efficiency figures need."""
+
+    estimate: Estimate
+    initialization: str
+    stage2_alpha: np.ndarray
+    stage2_iterations: int
+    rounds: list[dict[str, Any]]
+    seconds: dict[str, float]
+
+    def round_table(self, truth: np.ndarray | None = None) -> list[dict[str, Any]]:
+        """Per judge round: iterations (warm, cold, reduction) and, with truth, the MAE.
+
+        Round 0 is Stage 2.  ``iteration_reduction`` is 1 - warm/cold for that round and
+        ``cumulative_iteration_reduction`` is 1 - sum(warm)/sum(cold) over rounds 1..v.
+        """
+        rows: list[dict[str, Any]] = [{"round": 0, "iterations_warm": self.stage2_iterations}]
+        if truth is not None:
+            rows[0]["mae"] = float(np.mean(np.abs(self.stage2_alpha - truth)))
+        warm_total = cold_total = 0
+        for row in self.rounds:
+            out = {
+                key: row[key]
+                for key in ("round", "item", "information_gain", "iterations_warm",
+                            "iterations_cold", "judge_seconds", "em_seconds")
+                if key in row
+            }
+            out["answer"] = row["answer"] if isinstance(row["answer"], (str, int, float)) else repr(row["answer"])
+            if "iterations_cold" in row:
+                warm_total += row["iterations_warm"]
+                cold_total += row["iterations_cold"]
+                out["iteration_reduction"] = 1.0 - row["iterations_warm"] / max(row["iterations_cold"], 1)
+                out["cumulative_iteration_reduction"] = 1.0 - warm_total / max(cold_total, 1)
+            if truth is not None:
+                out["mae"] = float(np.mean(np.abs(np.asarray(row["alpha"]) - truth)))
+            rows.append(out)
+        return rows
+
+
 def estimate_pool(
     target: np.ndarray,
     config: Mapping[str, Any],
@@ -47,13 +104,17 @@ def estimate_pool(
     subset_ids: Sequence[Any] | None = None,
     judge: Callable[[int, list[Any], list[float]], Any] | None = None,
     rounds: int = 0,
-) -> tuple[Estimate, str]:
+) -> PoolRun:
     """Stage 1 initialization, Stage 2 EM, and optional Stage 3 judge refinement.
 
-    Returns the estimate and the initialization used: "retrieved-subsets" when labeled
-    calibration responses are supplied (K > 0), otherwise "random-truncated-normal".
+    The initialization is "retrieved-subsets" when labeled calibration responses are
+    supplied (K > 0) and "random-truncated-normal" otherwise.  Stage timings are wall
+    seconds; ``seconds["judge"]`` counts the judge's own time (original time for
+    cached votes).
     """
     evaluator = build_evaluator(config, seed)
+    seconds: dict[str, float] = {}
+    start = time.perf_counter()
     if source is not None and len(source):
         initial = calibration_parameters(
             source, source_gold, config["method"]["smoothing"], subset_ids=subset_ids
@@ -62,8 +123,15 @@ def estimate_pool(
     else:
         initial = None
         initialization = "random-truncated-normal"
+    seconds["stage1_prior"] = time.perf_counter() - start
+    start = time.perf_counter()
     estimate = evaluator.fit(target, initial)
+    seconds["stage2_em"] = time.perf_counter() - start
+    stage2_alpha, stage2_iterations = estimate.alpha.copy(), int(estimate.iterations)
+    rounds_log: list[dict[str, Any]] = []
+    seconds["stage3_select_em"] = seconds["judge"] = 0.0
     if judge is not None and int(rounds) > 0:
+        start = time.perf_counter()
         estimate = evaluator.refine(
             target,
             (estimate.alpha, estimate.beta, estimate.gamma),
@@ -71,8 +139,16 @@ def estimate_pool(
             rounds=int(rounds),
             batch_size=config["method"]["judge_batch_size"],
             valid=valid,
+            cold_initial=initial,
         )
-    return estimate, initialization
+        rounds_log = [row for row in estimate.history if "round" in row]
+        judge_seconds = sum(row["judge_seconds"] for row in rounds_log)
+        # Cold-start refits are diagnostics for the iteration-reduction figure, not part
+        # of the method, so their time is excluded.
+        seconds["stage3_select_em"] = sum(row["select_seconds"] + row["em_seconds"] for row in rounds_log)
+        seconds["judge"] = judge_seconds
+        seconds["stage3_wall_including_diagnostics"] = time.perf_counter() - start
+    return PoolRun(estimate, initialization, stage2_alpha, stage2_iterations, rounds_log, seconds)
 
 
 def unique_failures(labels: np.ndarray, invalid: np.ndarray) -> np.ndarray:
@@ -81,14 +157,6 @@ def unique_failures(labels: np.ndarray, invalid: np.ndarray) -> np.ndarray:
     for code, (i, j) in enumerate(zip(*np.nonzero(invalid)), start=1):
         responses[i, j] = -code
     return responses
-
-
-def judge_history(estimate: Estimate) -> list[dict[str, Any]]:
-    return [
-        {key: (value if isinstance(value, (str, int, float)) else repr(value)) for key, value in row.items()}
-        for row in estimate.history
-        if "round" in row
-    ]
 
 
 def release(*objects: Any) -> None:

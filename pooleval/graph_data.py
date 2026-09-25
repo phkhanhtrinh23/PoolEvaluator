@@ -5,8 +5,8 @@ Targets and the labeled nodes used to train the pool:
 * ACMv9, Citationv1, DBLPv7 (GNNEvaluator): the pool trains on a different source
   graph (``tasks.node.sources`` in the config) and predicts every node of the target
   graph.  The GNNEvaluator raw files (``<name>_docs.txt``, ``<name>_edgelist.txt``,
-  ``<name>_labels.txt``) are preferred.  Without them, the AdaGCN ``.mat`` release is
-  downloaded; it is multi-label, so its first label is used and a warning is printed.
+  ``<name>_labels.txt``) are read when present, otherwise the ``.mat`` release of the
+  same graphs is downloaded.
 * ogbn-arxiv: train on the OGB train split (papers up to 2017) and evaluate on the test
   split (2019 onward).  Node text is the paper title and abstract.
 * GOOD-Cora, GOOD-Twitch, GOOD-WebKB: train on the GOOD train split and evaluate on the
@@ -26,10 +26,9 @@ from __future__ import annotations
 import csv
 import gzip
 import json
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -87,9 +86,9 @@ def _node_files(
 ) -> tuple[list[str] | None, list[str] | None, list[str]]:
     """Read ``node_text.json`` and ``class_names.json``, verified against ``node_meta.json``.
 
-    ``class_names.json`` is a list, or ``{"by_domain": {domain: list}, "domain_of_node":
-    [...]}`` when label indices mean different classes in different domains (WebKB);
-    the names of the domain holding ``target_idx`` are returned.
+    ``class_names.json`` is a list, or per-domain lists ``{"by_domain": {domain: list},
+    "domain_of_node": [...]}``, in which case the names of the domain holding
+    ``target_idx`` are returned.
     """
     notes: list[str] = []
     meta = _optional_json(directory, "node_meta.json")
@@ -112,12 +111,8 @@ def _node_files(
         domains = sorted({domain_of_node[int(i)] for i in nodes})
         lists = {tuple(by_domain[d]) for d in domains}
         if len(lists) != 1:
-            raise ValueError(
-                f"{directory}: the target nodes span {domains}, whose label indices name different classes"
-            )
+            raise ValueError(f"{directory}: the target nodes span domains {domains} with different class names")
         names = list(lists.pop())
-        if len({tuple(v) for v in by_domain.values()}) > 1:
-            notes.append(f"class names follow the target domain {domains[0]}")
     return text, names, notes
 
 
@@ -147,12 +142,6 @@ def _load_citation_graph(name: str, root: Path) -> tuple[Any, list[str] | None, 
         groups = np.asarray(groups.todense() if sp.issparse(groups) else groups)
         y = groups.argmax(1)
         edges = np.vstack(sp.coo_matrix(mat["network"]).nonzero())
-        message = (
-            f"{name}: GNNEvaluator raw files not found; using the multi-label AdaGCN .mat "
-            f"and each node's first label ({int((groups.sum(1) > 1).sum())} nodes have two)"
-        )
-        warnings.warn(message, RuntimeWarning, stacklevel=2)
-        notes.append(message)
     graph = _data(x, edges, y)
     text, names, file_notes = _node_files(directory, graph)
     names = names or [f"category {c}" for c in range(int(y.max()) + 1)]
@@ -201,8 +190,7 @@ def _arxiv_text(directory: Path, mapping: Path, n: int) -> list[str] | None:
             from urllib.request import urlretrieve
 
             urlretrieve(ARXIV_TEXT_URL, path)
-        except OSError as exc:
-            warnings.warn(f"ogbn-arxiv text unavailable ({exc}); GOFA judging needs it", RuntimeWarning)
+        except OSError:
             return None
     with gzip.open(mapping / "nodeidx2paperid.csv.gz", "rt") as handle:
         paper_ids = [row[1] for row in list(csv.reader(handle))[1:]]

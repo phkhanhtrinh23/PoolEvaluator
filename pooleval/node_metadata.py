@@ -1,28 +1,22 @@
-"""Build ``node_text.json`` and ``class_names.json`` for graphs that ship without them.
+"""Build ``node_text.json`` and ``class_names.json`` for the GOOD node targets.
 
-GOFA and the graph language models read node text, and GOFA prompts name the
-candidate labels.  ogbn-arxiv provides both; this module recovers them for the other
-node targets from public raw releases, aligned to the node order the loaders use:
+GOFA and the graph language models read node text, and GOFA prompts name the candidate
+labels.  This module assembles both from the public raw releases, aligned to the node
+order the loaders use:
 
-* GOOD-Cora (PyG ``CitationFull('Cora')`` = graph2gauss ``cora.npz``): each node's
-  McCallum Cora paper id resolves, through the original ``cora-classify`` release,
-  to the extracted title and abstract.  Class names are the 70 Cora topic paths.
+* GOOD-Cora (PyG ``CitationFull('Cora')`` = graph2gauss ``cora.npz``): each node's Cora
+  paper id resolves, through the original ``cora-classify`` release, to the extracted
+  title and abstract.  Class names are the 70 Cora topic paths.
 * GOOD-WebKB (PyG ``WebKB`` = Geom-GCN files, concatenated Wisconsin, Cornell, Texas):
   each node is matched to its LINQS WebKB row by its 1703-word binary vector, which
-  gives the page URL and class; the page text comes from the CMU WebKB archive.
-  Geom-GCN numbered the classes separately for each university, so a label index
-  names a different class in different universities.  ``class_names.json`` therefore
-  stores one list per university plus each node's university.
-* GOOD-Twitch (PyG ``Twitch`` DE, EN, ES, FR, PT, RU): Twitch has no text, so each
-  node gets a description built from SNAP account metadata (language, account age,
-  views, partner status, number of games).  The label ("mature") is never included.
-* ACMv9, Citationv1, DBLPv7: only title bag-of-words vectors over an unpublished
-  vocabulary were released, so no node text can be recovered.  The five research
-  areas are documented, but not which label index is which; class names are written
-  only when the order is supplied explicitly.
+  gives the page URL and class; the page text comes from the CMU WebKB archive.  Class
+  names are stored per university (``by_domain``) with each node's university.
+* GOOD-Twitch (PyG ``Twitch`` DE, EN, ES, FR, PT, RU): each node is described from its
+  SNAP account metadata (language, account age, views, partner status, number of
+  games); the label ("mature") is not part of the description.
 
 Every build also writes ``node_meta.json`` with the node count and a SHA-1 of the
-label sequence.  The loaders refuse the text when the graph they load does not match.
+label sequence; the loaders use the files only for a graph with the same labels.
 
     python -m pooleval.node_metadata --dataset all --node-root datasets/node
 """
@@ -58,9 +52,6 @@ WEBKB_UNIVERSITIES = ("wisconsin", "cornell", "texas")
 TWITCH_LANGUAGES = (
     ("DE", "DE", "German"), ("EN", "ENGB", "English"), ("ES", "ES", "Spanish"),
     ("FR", "FR", "French"), ("PT", "PTBR", "Portuguese"), ("RU", "RU", "Russian"),
-)
-CITATION_AREAS = (
-    "Database", "Artificial Intelligence", "Computer Vision", "Information Security", "Networking",
 )
 MAX_CHARS = 2000
 
@@ -102,8 +93,6 @@ def _write(
     }
     (directory / "node_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"[written] {directory} ({len(labels)} nodes)")
-    for note in notes:
-        print(f"  note: {note}")
     return directory
 
 
@@ -173,7 +162,6 @@ def build_good_cora(node_root: Path, raw_dir: Path) -> Path:
         (npz["attr_data"], npz["attr_indices"], npz["attr_indptr"]), shape=tuple(npz["attr_shape"])
     )
     text: list[str] = []
-    counts = Counter()
     for index, paper in enumerate(paper_ids):
         fields = extracted.get(paper, {})
         title = fields.get("Title", "")
@@ -185,23 +173,16 @@ def build_good_cora(node_root: Path, raw_dir: Path) -> Path:
                     break
         abstract = fields.get("Abstract", "")
         if title and abstract:
-            counts["title+abstract"] += 1
             text.append(_clip(f"Title: {title}. Abstract: {abstract}"))
         elif title:
-            counts["title"] += 1
             text.append(_clip(f"Title: {title}."))
         else:
-            counts["keywords"] += 1
             row = attributes.getrow(index)
             top = row.indices[np.argsort(-row.data)][:30]
             text.append(_clip("Keywords: " + ", ".join(attr_names[int(i)] for i in top) + "."))
-    notes = [
-        "text from the original McCallum Cora extractions matched by paper id; "
-        + ", ".join(f"{count} with {kind}" for kind, count in counts.most_common())
-    ]
     return _write(
-        node_root / "good" / "GOODCora", labels, "graph2gauss cora.npz + McCallum cora-classify",
-        notes, text, class_names,
+        node_root / "good" / "GOODCora", labels, "graph2gauss cora.npz + cora-classify",
+        [], text, class_names,
     )
 
 
@@ -273,7 +254,6 @@ def build_good_webkb(node_root: Path, raw_dir: Path) -> Path:
     text: list[str] = []
     domain_of_node: list[str] = []
     by_domain: dict[str, list[str]] = {}
-    notes: list[str] = []
     with tarfile.open(linqs) as tar:
         content = {
             Path(m.name).stem: tar.extractfile(m).read().decode("latin-1")
@@ -299,12 +279,10 @@ def build_good_webkb(node_root: Path, raw_dir: Path) -> Path:
             raise ValueError(f"{university}: Geom-GCN labels do not map one-to-one onto classes")
         by_domain[university] = [mapping[label] for label in range(len(mapping))]
         used: set[str] = set()
-        ambiguous = 0
         for label, hits in zip(geom_labels, matches):
             candidates = [h for h in hits if h[1] == mapping[label] and h[0] not in used] or [
                 h for h in hits if h[0] not in used
             ] or hits
-            ambiguous += len(hits) > 1
             url, page_class = candidates[0]
             used.add(url)
             stored = pages.get(_url_key(url), {})
@@ -313,17 +291,9 @@ def build_good_webkb(node_root: Path, raw_dir: Path) -> Path:
             text.append(_clip(f"Web page {url}. Title: {title}. Content: {body}"))
             labels.append(label)
             domain_of_node.append(university)
-        if ambiguous:
-            notes.append(f"{university}: {ambiguous} nodes share their word vector with another page")
-    if len({tuple(names) for names in by_domain.values()}) > 1:
-        notes.append(
-            "Geom-GCN numbers the WebKB classes separately per university, so a label index "
-            "names a different class in different universities: "
-            + "; ".join(f"{u}={names}" for u, names in by_domain.items())
-        )
     return _write(
         node_root / "good" / "GOODWebKB", labels, "Geom-GCN WebKB + LINQS WebKB + CMU WebKB pages",
-        notes, text, {"by_domain": by_domain, "domain_of_node": domain_of_node},
+        [], text, {"by_domain": by_domain, "domain_of_node": domain_of_node},
     )
 
 
@@ -334,7 +304,6 @@ def build_good_twitch(node_root: Path, raw_dir: Path) -> Path:
     archive = _download(SNAP_TWITCH_URL, raw_dir / "twitch.zip")
     labels: list[int] = []
     text: list[str] = []
-    notes: list[str] = []
     with zipfile.ZipFile(archive) as bundle:
         names = bundle.namelist()
         for _, folder, language in TWITCH_LANGUAGES:
@@ -347,8 +316,6 @@ def build_good_twitch(node_root: Path, raw_dir: Path) -> Path:
                 by_id.setdefault(int(row["new_id"]), row)
             if sorted(by_id) != list(range(len(by_id))):
                 raise ValueError(f"{folder}: new_id does not cover 0..{len(by_id) - 1}")
-            if len(by_id) != len(rows):
-                notes.append(f"{folder}: {len(rows) - len(by_id)} duplicated account rows dropped")
             for node in range(len(by_id)):
                 row = by_id[node]
                 played = len(set(games.get(str(node), [])))
@@ -359,65 +326,26 @@ def build_good_twitch(node_root: Path, raw_dir: Path) -> Path:
                     f"The streamer has played {played} distinct games."
                 )
                 labels.append(int(row["mature"] == "True"))
-    notes += [
-        "Twitch has no node text; descriptions are built from SNAP account metadata and exclude the label",
-        "PyG node i is assumed to be MUSAE new_id i within each language; the label fingerprint checks this",
-    ]
     return _write(
-        node_root / "good" / "GOODTwitch", labels, "SNAP twitch (MUSAE)", notes, text,
+        node_root / "good" / "GOODTwitch", labels, "SNAP twitch (MUSAE)", [], text,
         ["does not stream mature content", "streams mature content"],
     )
 
 
-# ------------------------------------------------------------ citation networks
-
-
-def build_citation(name: str, node_root: Path, label_order: Sequence[str] | None) -> Path | None:
-    print(
-        f"[{name}] no node text: the release has only title bag-of-words over an unpublished "
-        "vocabulary. Add node_text.json yourself if you have the paper titles."
-    )
-    if not label_order:
-        print(
-            f"[{name}] class names not written: the documented areas {list(CITATION_AREAS)} are not "
-            "published with their label indices; pass --citation-label-order to assert an order."
-        )
-        return None
-    from .graph_data import _load_citation_graph
-
-    graph, _, _, _ = _load_citation_graph(name, node_root)
-    if len(label_order) != int(graph.y.max()) + 1:
-        raise ValueError(f"{name} has {int(graph.y.max()) + 1} classes, got {len(label_order)} names")
-    return _write(
-        node_root / "gnnevaluator" / name, graph.y.tolist(), "user-specified label order",
-        ["class order supplied with --citation-label-order, not verified against the data"],
-        class_names=list(label_order),
-    )
-
-
 BUILDERS = {"good-cora": build_good_cora, "good-webkb": build_good_webkb, "good-twitch": build_good_twitch}
-CITATION = ("acmv9", "citationv1", "dblpv7")
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset", choices=[*BUILDERS, *CITATION, "all"], default="all")
+    parser.add_argument("--dataset", choices=[*BUILDERS, "all"], default="all")
     parser.add_argument("--node-root", default="datasets/node")
     parser.add_argument("--raw-dir", help="download cache (default: <node-root>/raw_text)")
-    parser.add_argument(
-        "--citation-label-order",
-        help="comma-separated class names for label indices 0..4 of ACMv9/Citationv1/DBLPv7",
-    )
     args = parser.parse_args(argv)
     node_root = Path(args.node_root)
     raw_dir = Path(args.raw_dir) if args.raw_dir else node_root / "raw_text"
-    order = [part.strip() for part in args.citation_label_order.split(",")] if args.citation_label_order else None
-    datasets = [*BUILDERS, *CITATION] if args.dataset == "all" else [args.dataset]
+    datasets = list(BUILDERS) if args.dataset == "all" else [args.dataset]
     for dataset in datasets:
-        if dataset in BUILDERS:
-            BUILDERS[dataset](node_root, raw_dir)
-        else:
-            build_citation(dataset, node_root, order)
+        BUILDERS[dataset](node_root, raw_dir)
 
 
 if __name__ == "__main__":

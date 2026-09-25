@@ -1,4 +1,8 @@
-"""Spider/BIRD loading from the Text2SQL dataset layout described in the README."""
+"""Text2SQL benchmark loading (layouts described in the README).
+
+Spider and BIRD are loaded here; Spider 2.0, BEAVER, ScienceBenchmark, EntSQL, and
+LiveSQLBench are loaded by ``pooleval.benchmarks``.
+"""
 
 from __future__ import annotations
 
@@ -12,14 +16,30 @@ from typing import Any, Iterable
 
 @dataclass(frozen=True)
 class Text2SQLItem:
+    """One question.  ``db_path`` is a SQLite file or a ``postgresql://``/``mysql://`` locator.
+
+    Gold is ``gold_sql`` (scored with EX-Extended) or, when a benchmark releases result
+    tables instead, ``gold_results`` scored by ``gold_matcher`` ("spider2" or "entsql")
+    with the JSON options in ``gold_spec``.  Items without gold can still be evaluated
+    label-free; true accuracy is then not reported.
+    """
+
     id: str
     dataset: str
     db_id: str
     question: str
-    gold_sql: str
-    db_path: Path
+    gold_sql: str | None
+    db_path: Any
     schema: dict[str, Any]
     evidence: str = ""
+    dialect: str = "sqlite"
+    gold_results: tuple[str, ...] = ()
+    gold_matcher: str | None = None
+    gold_spec: str = ""
+
+    @property
+    def has_gold(self) -> bool:
+        return bool(self.gold_sql) or bool(self.gold_results)
 
 
 def dataset_layout(
@@ -63,6 +83,10 @@ def resolve_database(db_id: str, roots: Iterable[Path]) -> Path:
 
 @lru_cache(maxsize=256)
 def introspect_schema(db_path: str) -> dict[str, Any]:
+    from .sql_dialects import dialect, introspect
+
+    if dialect(db_path) != "sqlite":
+        return introspect(db_path)
     items: list[dict[str, Any]] = []
     with sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True) as connection:
         tables = connection.execute(
@@ -81,13 +105,26 @@ def introspect_schema(db_path: str) -> dict[str, Any]:
     return {"schema_items": items, "foreign_keys": []}
 
 
+TEXT2SQL_DATASETS = ("spider", "bird", "spider2", "beaver", "sciencebenchmark", "entsql", "livesqlbench")
+# Benchmarks with a labeled split usable as Stage 1 calibration data.
+HAS_TRAIN_SPLIT = {"spider", "bird", "sciencebenchmark"}
+
+
 def load_text2sql(
     dataset: str,
     split: str = "target",
     limit: int | None = None,
     **layout: Any,
 ) -> list[Text2SQLItem]:
-    metadata, roots = dataset_layout(dataset, split, **layout)
+    if dataset not in {"spider", "bird"}:
+        from .benchmarks import load_benchmark
+
+        items = load_benchmark(dataset, split, layout.get("text2sql_root", "datasets/text2sql"), **layout)
+        if not items and split == "target":
+            raise RuntimeError(f"no usable {dataset}/{split} items found")
+        return items[:limit] if limit is not None else items
+    roots_only = {k: v for k, v in layout.items() if k in {"text2sql_root", "bird_metadata_root", "bird_database_root"}}
+    metadata, roots = dataset_layout(dataset, split, **roots_only)
     if not metadata.is_file():
         raise FileNotFoundError(f"missing metadata: {metadata}")
     with metadata.open(encoding="utf-8") as handle:

@@ -27,6 +27,7 @@ models = [
   "transformers>=4.51",
 ]
 graph-data = ["ogb>=1.3.6"]
+sql-servers = ["psycopg[binary]>=3.1", "pymysql>=1.1"]
 judges = ["anthropic>=0.70", "openai>=2.0"]
 dev = ["pytest>=8.0"]
 

@@ -25,10 +25,13 @@ def _move_batch_to_model(batch: dict[str, Any], model: Any) -> dict[str, Any]:
     return moved
 
 
-def text2sql_prompt(question: str, schema: str, evidence: str = "") -> str:
+DIALECT_NAMES = {"sqlite": "SQLite", "postgresql": "PostgreSQL", "mysql": "MySQL"}
+
+
+def text2sql_prompt(question: str, schema: str, evidence: str = "", dialect: str = "sqlite") -> str:
     evidence_block = f"\nEvidence: {evidence}" if evidence else ""
     return (
-        "Translate the question to one SQLite query. Return SQL only.\n"
+        f"Translate the question to one {DIALECT_NAMES.get(dialect, dialect)} query. Return SQL only.\n"
         f"Schema:\n{schema}{evidence_block}\nQuestion: {question}\nSQL:"
     )
 

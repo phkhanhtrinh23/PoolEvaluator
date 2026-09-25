@@ -1,4 +1,8 @@
-"""Build the five deterministic modified SQLite instances used by EX-Extended."""
+"""Build the five deterministic modified database instances used by EX-Extended.
+
+SQLite databases are copied file by file here; PostgreSQL and MySQL databases are
+handled by ``pooleval.sql_dialects`` with the same edits.
+"""
 
 from __future__ import annotations
 
@@ -9,9 +13,9 @@ import shutil
 import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
-from .data import load_text2sql
+from .data import TEXT2SQL_DATASETS, load_text2sql
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,15 @@ def build_instances(
     cap_rows_per_table: int = 100,
 ) -> list[InstanceRecord]:
     """Copy one source database and make ``count`` deterministic, queryable variants."""
+    from .sql_dialects import build_server_instances, dialect
+
+    if dialect(db_path) != "sqlite":
+        return [
+            InstanceRecord(str(db_path), instance, variant, changed, "ok")
+            for variant, (instance, changed) in enumerate(
+                build_server_instances(db_path, count, cap_rows_per_table), start=1
+            )
+        ]
     source = Path(db_path).resolve()
     if not source.is_file():
         raise FileNotFoundError(source)
@@ -147,7 +160,7 @@ def build_dataset_instances(
     **layout: str,
 ) -> list[InstanceRecord]:
     items = load_text2sql(dataset, split, **layout)
-    databases: dict[Path, None] = {}
+    databases: dict[Any, None] = {}
     for item in items:
         databases.setdefault(item.db_path, None)
     selected = list(databases)[:limit_databases]
@@ -160,7 +173,7 @@ def build_dataset_instances(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", choices=["spider", "bird", "all"], default="all")
+    parser.add_argument("--dataset", choices=[*TEXT2SQL_DATASETS, "all"], default="all")
     parser.add_argument("--split", choices=["target", "train"], default="target")
     parser.add_argument("--output-dir", default="db_instances")
     parser.add_argument("--limit-databases", type=int)
@@ -168,7 +181,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bird-metadata-root", default="datasets/text2sql/bird")
     parser.add_argument("--bird-database-root", default="datasets/text2sql/bird")
     args = parser.parse_args(argv)
-    datasets = ("spider", "bird") if args.dataset == "all" else (args.dataset,)
+    datasets = TEXT2SQL_DATASETS if args.dataset == "all" else (args.dataset,)
     total = 0
     layout = {
         "text2sql_root": args.text2sql_root,
@@ -176,13 +189,19 @@ def main(argv: list[str] | None = None) -> None:
         "bird_database_root": args.bird_database_root,
     }
     for dataset in datasets:
-        records = build_dataset_instances(
-            dataset,
-            args.split,
-            args.output_dir,
-            limit_databases=args.limit_databases,
-            **layout,
-        )
+        try:
+            records = build_dataset_instances(
+                dataset,
+                args.split,
+                args.output_dir,
+                limit_databases=args.limit_databases,
+                **layout,
+            )
+        except (FileNotFoundError, RuntimeError) as exc:
+            if args.dataset != "all":
+                raise
+            print(f"[{dataset}] skipped: {exc}")
+            continue
         total += len(records)
         for record in records:
             print(f"  v{record.variant}: rows={record.changed_rows} integrity={record.integrity} {record.instance}")

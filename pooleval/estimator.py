@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
@@ -154,7 +155,7 @@ class PoolEvaluator:
 
     def __init__(
         self,
-        max_iterations: int = 100,
+        max_iterations: int = 2500,
         tolerance: float = 1e-6,
         smoothing: float = 1.0,
         seed: int = 0,
@@ -301,12 +302,20 @@ class PoolEvaluator:
         rounds: int = 10,
         batch_size: int = 1,
         valid: np.ndarray | None = None,
+        cold_initial: tuple[Sequence[float], Sequence[float], Sequence[float]] | None = None,
+        track_cold: bool = True,
     ) -> Estimate:
         """Select ambiguous items, call a judge, and warm-start EM after each round.
 
         ``judge(item, candidates, support)`` receives the valid candidate answers and,
         for each, its accuracy-weighted support: the summed current alpha of the
         models that produced it.  Judge ensembles use it to break vote ties.
+
+        Every round is logged in ``estimate.history`` with the judge's wall time (or the
+        ``last_seconds`` a caching judge reports), the EM iterations of the warm start,
+        and -- when ``track_cold`` -- the iterations a cold start from ``cold_initial``
+        (theta^(0); ``None`` = the random truncated-normal draw) needs on the same
+        agreement matrix and validated set, plus alpha after the round.
         """
         r = _as_responses(responses)
         mask = _valid_mask(valid, r.shape)
@@ -317,8 +326,10 @@ class PoolEvaluator:
         for round_index in range(int(rounds)):
             selected = 0
             for _ in range(max(1, int(batch_size))):
+                select_start = time.perf_counter()
                 gains = self.information_gain(r, estimate, validated, valid=mask)
                 item = int(np.argmax(gains))
+                select_seconds = time.perf_counter() - select_start
                 if not np.isfinite(gains[item]) or gains[item] <= 0.0:
                     break
                 candidates = candidate_answers(r[item], mask[item])
@@ -326,18 +337,29 @@ class PoolEvaluator:
                     float(estimate.alpha[(r[item] == answer) & mask[item]].sum())
                     for answer in candidates
                 ]
+                judge_start = time.perf_counter()
                 answer = judge(int(item), candidates, support)
+                judge_seconds = float(getattr(judge, "last_seconds", time.perf_counter() - judge_start))
                 validated[int(item)] = answer
-                judge_history.append(
-                    {
-                        "round": round_index + 1,
-                        "item": int(item),
-                        "information_gain": float(gains[item]),
-                        "answer": answer,
-                    }
-                )
                 current_initial = (estimate.alpha, estimate.beta, estimate.gamma)
+                em_start = time.perf_counter()
                 estimate = self.fit(r, current_initial, validated)
+                em_seconds = time.perf_counter() - em_start
+                row: dict[str, Any] = {
+                    "round": round_index + 1,
+                    "item": int(item),
+                    "information_gain": float(gains[item]),
+                    "answer": answer,
+                    "iterations_warm": int(estimate.iterations),
+                    "select_seconds": select_seconds,
+                    "judge_seconds": judge_seconds,
+                    "em_seconds": em_seconds,
+                    "alpha": estimate.alpha.tolist(),
+                }
+                if track_cold:
+                    cold = self.fit(r, cold_initial, validated, agreement=estimate.agreement)
+                    row["iterations_cold"] = int(cold.iterations)
+                judge_history.append(row)
                 selected += 1
             if not selected:
                 break

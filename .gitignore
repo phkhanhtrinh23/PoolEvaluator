@@ -17,3 +17,4 @@ checkpoints/
 datasets/
 db_instances/
 .cache/
+*.toml
